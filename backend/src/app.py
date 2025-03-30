@@ -49,12 +49,17 @@ app.config["SQLALCHEMY_ECHO"] = False
 app.config["DEBUG_TB_INTERCEPT_REDIRECTS"] = False
 app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "secret123")
 
+# Flag, das angibt, ob die Datenbank verfügbar ist
+db_available = False
+
 try:
     connect_db(app)
     db.create_all()
     logger.info("Datenbank erfolgreich verbunden und Tabellen erstellt")
+    db_available = True
 except Exception as e:
     logger.error(f"Fehler bei der Datenbankverbindung: {e}")
+    logger.warning("Anwendung läuft im eingeschränkten Modus ohne Datenbankfunktionalität")
     # Nicht abbrechen, damit der Healthcheck trotzdem funktioniert
 
 # Überprüfung des statischen Ordners
@@ -113,28 +118,56 @@ def health():
     """Health check endpoint"""
     return "OK", 200
 
+@app.route("/api/status")
+def api_status():
+    """API Status Check"""
+    return jsonify({
+        "status": "online",
+        "database": "connected" if db_available else "disconnected",
+        "message": "API is operational" + (" with database" if db_available else " without database")
+    })
+
 @app.route("/api/stepstone", methods=["GET"])
 def get_stepstone():
     """ Get jobs from Stepstone """
     try:
-        refresh_db()
         title = request.args.get("title")
         city = request.args.get("city")
+        
+        # Scraping durchführen (unabhängig von der Datenbank)
         stepstone_jobs = find_stepstone_jobs(title, city)
-
-        for item in stepstone_jobs:
-            job = Job(
-                title=item["title"],
-                company=item["company"],
-                location=item["location"],
-                url=item["url"],
-                source="stepstone",
-            )
-            db.session.add(job)
-
-        db.session.commit()
-        jobs = Job.query.filter_by(source="stepstone").all()
-        serialized = [serialize_job(j) for j in jobs]
+        
+        # Wenn die Datenbank verfügbar ist, speichern wir die Jobs
+        if db_available:
+            try:
+                # Datenbank bereinigen
+                refresh_db()
+                
+                # Jobs speichern
+                for item in stepstone_jobs:
+                    job = Job(
+                        title=item["title"],
+                        company=item["company"],
+                        location=item["location"],
+                        url=item["url"],
+                        source="stepstone",
+                    )
+                    db.session.add(job)
+                
+                db.session.commit()
+                logger.info(f"{len(stepstone_jobs)} Stepstone-Jobs in Datenbank gespeichert")
+                
+                # Jobs aus der Datenbank abfragen
+                jobs = Job.query.filter_by(source="stepstone").all()
+                serialized = [serialize_job(j) for j in jobs]
+            except Exception as e:
+                logger.error(f"Datenbankfehler beim Speichern der Stepstone-Jobs: {e}")
+                serialized = stepstone_jobs  # Fallback: gescrapte Jobs direkt zurückgeben
+        else:
+            # Ohne Datenbank geben wir die gescrapten Jobs direkt zurück
+            logger.info("Datenbank nicht verfügbar, gebe gescrapte Jobs direkt zurück")
+            serialized = stepstone_jobs
+            
         return jsonify(serialized)
     except Exception as e:
         logger.error(f"Fehler in Stepstone-Route: {e}")
@@ -144,24 +177,43 @@ def get_stepstone():
 def get_monster():
     """ Get jobs from Monster """
     try:
-        refresh_db()
         title = request.args.get("title")
         city = request.args.get("city")
+        
+        # Scraping durchführen (unabhängig von der Datenbank)
         monster_jobs = find_monster_jobs(title, city)
-
-        for item in monster_jobs:
-            job = Job(
-                title=item["title"],
-                company=item["company"],
-                location=item["location"],
-                url=item["url"],
-                source="monster",
-            )
-            db.session.add(job)
-
-        db.session.commit()
-        jobs = Job.query.filter_by(source="monster").all()
-        serialized = [serialize_job(j) for j in jobs]
+        
+        # Wenn die Datenbank verfügbar ist, speichern wir die Jobs
+        if db_available:
+            try:
+                # Datenbank bereinigen
+                refresh_db()
+                
+                # Jobs speichern
+                for item in monster_jobs:
+                    job = Job(
+                        title=item["title"],
+                        company=item["company"],
+                        location=item["location"],
+                        url=item["url"],
+                        source="monster",
+                    )
+                    db.session.add(job)
+                
+                db.session.commit()
+                logger.info(f"{len(monster_jobs)} Monster-Jobs in Datenbank gespeichert")
+                
+                # Jobs aus der Datenbank abfragen
+                jobs = Job.query.filter_by(source="monster").all()
+                serialized = [serialize_job(j) for j in jobs]
+            except Exception as e:
+                logger.error(f"Datenbankfehler beim Speichern der Monster-Jobs: {e}")
+                serialized = monster_jobs  # Fallback: gescrapte Jobs direkt zurückgeben
+        else:
+            # Ohne Datenbank geben wir die gescrapten Jobs direkt zurück
+            logger.info("Datenbank nicht verfügbar, gebe gescrapte Jobs direkt zurück")
+            serialized = monster_jobs
+            
         return jsonify(serialized)
     except Exception as e:
         logger.error(f"Fehler in Monster-Route: {e}")
