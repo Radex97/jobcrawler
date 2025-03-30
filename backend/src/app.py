@@ -8,17 +8,18 @@ from .scraping import find_monster_jobs, find_stepstone_jobs
 app = Flask(__name__)
 
 # activate CORS for flask app
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # load .env variables
 cli.load_dotenv(".env")
 
 # get DB_URI from environ variable (useful for production/testing) or,
 # if not set there, use development local db.
-app.config["SQLALCHEMY_DATABASE_URI"] = os.environ.get(
-    "DATABASE_URL", "postgres:///jobbig"
-)
+database_url = os.environ.get("DATABASE_URL", "postgres:///jobbig")
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
 
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 app.config["SQLALCHEMY_ECHO"] = False
 app.config["DEBUG_TB_INTERCEPT_REDIRECTS"] = False
