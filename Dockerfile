@@ -32,7 +32,7 @@ RUN mkdir -p ./backend/static
 COPY --from=frontend-build /app/frontend-build/ ./backend/static/
 
 # Installiere Abhängigkeiten
-RUN pip install -r backend/requirements.txt
+RUN pip install -r backend/requirements.txt gunicorn psycopg2-binary
 
 # Debug: Inhalt des statischen Ordners anzeigen
 RUN ls -la ./backend/static/
@@ -52,4 +52,4 @@ HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:${PORT}/health || exit 1
 
 # Starte die Anwendung mit Debug-Ausgabe - kürzeres Timeout für bessere Antwortzeiten
-CMD cd backend && gunicorn --bind 0.0.0.0:${PORT} --log-level debug --access-logfile - --error-logfile - --timeout 5 src.app:app 
+CMD cd backend && python -m gunicorn.app.wsgiapp --bind 0.0.0.0:${PORT} --log-level debug --access-logfile - --error-logfile - --timeout 30 --workers 2 src.app:app 

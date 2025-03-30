@@ -1,4 +1,3 @@
-import psycopg
 import logging
 import os
 from datetime import datetime
@@ -10,17 +9,39 @@ def get_database():
     """
     Stellt eine Verbindung zur PostgreSQL-Datenbank her
     """
-    try:
-        database_url = os.environ.get("DATABASE_URL", "postgres:///jobbig")
-        if database_url.startswith("postgres://"):
-            database_url = database_url.replace("postgres://", "postgresql://", 1)
+    database_url = os.environ.get("DATABASE_URL", "postgres:///jobbig")
+    logger.info(f"Versuche Verbindung zur Datenbank herzustellen (obfuskiert): {database_url[:15]}...")
+    
+    # Railway verwendet 'postgres://' anstatt 'postgresql://'
+    if database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+        logger.info("Datenbankstring von postgres:// auf postgresql:// korrigiert")
         
+    # Versuche zuerst mit psycopg
+    try:
+        import psycopg
         conn = psycopg.connect(database_url)
-        logger.info("Datenbankverbindung erfolgreich hergestellt")
+        logger.info("Datenbankverbindung erfolgreich mit psycopg hergestellt")
         return conn
+    except ImportError:
+        logger.warning("psycopg nicht verfügbar, versuche mit psycopg2")
     except Exception as e:
-        logger.error(f"Fehler beim Herstellen der Datenbankverbindung: {e}")
-        return None
+        logger.error(f"Fehler beim Herstellen der Datenbankverbindung mit psycopg: {e}")
+    
+    # Versuche mit psycopg2, wenn psycopg nicht funktioniert
+    try:
+        import psycopg2
+        conn = psycopg2.connect(database_url)
+        logger.info("Datenbankverbindung erfolgreich mit psycopg2 hergestellt")
+        return conn
+    except ImportError:
+        logger.warning("psycopg2 nicht verfügbar")
+    except Exception as e:
+        logger.error(f"Fehler beim Herstellen der Datenbankverbindung mit psycopg2: {e}")
+    
+    # Wenn keine Methode funktioniert hat
+    logger.error("Keine Datenbankverbindung konnte hergestellt werden")
+    return None
 
 def verify_database_connection():
     """
@@ -136,4 +157,55 @@ def get_jobs_by_criteria(title="", city="", source=""):
         except Exception:
             pass
     
-    return jobs 
+    return jobs
+
+def create_tables_if_not_exist():
+    """
+    Erstellt die benötigten Tabellen, falls sie noch nicht existieren
+    """
+    conn = get_database()
+    if not conn:
+        logger.error("Keine Datenbankverbindung vorhanden, Tabellen können nicht erstellt werden")
+        return False
+    
+    try:
+        with conn.cursor() as cur:
+            # Prüfe, ob die jobs-Tabelle existiert
+            cur.execute("""
+                SELECT EXISTS (
+                   SELECT FROM information_schema.tables 
+                   WHERE table_name = 'jobs'
+                );
+            """)
+            table_exists = cur.fetchone()[0]
+            
+            if not table_exists:
+                logger.info("Jobs-Tabelle existiert nicht, erstelle sie")
+                cur.execute("""
+                    CREATE TABLE jobs (
+                        id SERIAL PRIMARY KEY,
+                        title VARCHAR(200) NOT NULL,
+                        company VARCHAR(200) NOT NULL,
+                        location VARCHAR(200) NOT NULL,
+                        url VARCHAR(200) NOT NULL,
+                        source VARCHAR(200) NOT NULL
+                    );
+                """)
+                conn.commit()
+                logger.info("Jobs-Tabelle erfolgreich erstellt")
+            else:
+                logger.info("Jobs-Tabelle existiert bereits")
+                
+            return True
+    except Exception as e:
+        logger.error(f"Fehler beim Erstellen der Tabellen: {e}")
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass 

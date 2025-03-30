@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 # Bedingte Importe für Datenbankfunktionalität - darf nicht fehlschlagen für Healthcheck
 try:
     import psycopg
-    from .database import get_database, save_new_jobs, get_jobs_by_criteria, verify_database_connection
+    from .database import get_database, save_new_jobs, get_jobs_by_criteria, verify_database_connection, create_tables_if_not_exist
     db_imports_successful = True
     logger.info("Datenbankmodule erfolgreich importiert")
 except ImportError as e:
@@ -33,6 +33,10 @@ except ImportError as e:
     def get_jobs_by_criteria(*args, **kwargs):
         logger.warning("Keine Datenbankunterstützung verfügbar, keine Jobs abgerufen")
         return []
+        
+    def create_tables_if_not_exist():
+        logger.warning("Keine Datenbankunterstützung verfügbar, Tabellen können nicht erstellt werden")
+        return False
 
 # Den absoluten Pfad zum aktuellen Modul finden
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -205,11 +209,28 @@ def create_app():
     @app.route("/api/status")
     def api_status():
         """API Status Check - kann länger dauern, da hier die Datenbankverbindung geprüft wird"""
+        db_status = verify_database_connection()
+        db_schema_ok = False
+        
+        # Versuche Tabellen zu erstellen, falls nötig und DB verfügbar ist
+        if db_status and db_imports_successful:
+            db_schema_ok = create_tables_if_not_exist()
+            if db_schema_ok:
+                logger.info("Datenbank-Schema erfolgreich überprüft/erstellt")
+            else:
+                logger.warning("Datenbank-Schema konnte nicht erstellt werden")
+        
         return jsonify({
             "status": "online",
-            "database": "connected" if verify_database_connection() else "disconnected",
+            "database": "connected" if db_status else "disconnected",
+            "database_schema": "ok" if db_schema_ok else "not_available",
             "version": "1.0.0",
-            "db_imports": "available" if db_imports_successful else "unavailable"
+            "db_imports": "available" if db_imports_successful else "unavailable",
+            "env_vars": {
+                "PORT": os.environ.get("PORT", "nicht gesetzt"),
+                "DATABASE_URL": "vorhanden" if os.environ.get("DATABASE_URL") else "nicht gesetzt",
+                "RAILWAY_PUBLIC_DOMAIN": os.environ.get("RAILWAY_PUBLIC_DOMAIN", "nicht gesetzt")
+            }
         })
     
     @app.route("/api/stepstone", methods=["GET"])
@@ -334,6 +355,20 @@ def create_fallback_index(app):
 
 # Erstelle die App bei Import
 app = create_app()
+
+# Versuche Tabellen zu erstellen, falls DB verfügbar ist
+if db_imports_successful:
+    try:
+        logger.info("Prüfe Datenbankverbindung und Schema beim Start")
+        db_ok = verify_database_connection()
+        if db_ok:
+            schema_ok = create_tables_if_not_exist()
+            logger.info(f"Datenbank-Schema-Status: {'OK' if schema_ok else 'Fehler'}")
+        else:
+            logger.warning("Keine Datenbankverbindung beim Start")
+    except Exception as e:
+        logger.error(f"Fehler bei der Datenbankinitialisierung: {e}")
+        logger.warning("Anwendung läuft im eingeschränkten Modus ohne Datenbankfunktionalität")
 
 # Wenn diese Datei direkt ausgeführt wird
 if __name__ == "__main__":
