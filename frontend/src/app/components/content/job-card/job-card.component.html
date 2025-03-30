@@ -1,0 +1,12 @@
+<div
+  class="flex flex-col w-64 p-4 m-6 text-left transition duration-200 ease-in-out transform bg-white border-4 border-blue-200 rounded-md shadow-lg hover:-translate-y-1 hover:scale-110"
+  id="{{ job.id }}"
+>
+  <a href="{{ job.url }}" target="_blank"
+    ><h2 class="text-lg font-bold">
+      {{ job.title }}
+    </h2></a
+  >
+  <p>{{ job.company }}</p>
+  <p class="text-sm text-gray-500">{{ job.location }}</p>
+</div>

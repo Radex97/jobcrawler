@@ -1,0 +1,8 @@
+{
+    "python.formatting.provider": "black",
+    "[python]": {
+        "editor.formatOnPaste": false,
+        "editor.formatOnSaveMode": "file"
+    },
+    "python.pythonPath": "/home/christopher/.local/share/virtualenvs/backend-kx4jHy_k/bin/python"
+}

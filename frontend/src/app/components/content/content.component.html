@@ -1,0 +1,7 @@
+<div class="text-center py-14">
+  <h1 class="mb-5 text-2xl">Start your job search</h1>
+  <app-job-search-form (getJobs)="getJobs($event)"></app-job-search-form>
+  <div class="flex flex-row flex-wrap justify-center w-4/5 mx-auto">
+    <app-job-card *ngFor="let job of jobs" [job]="job"></app-job-card>
+  </div>
+</div>
