@@ -6,8 +6,17 @@ COPY frontend ./frontend
 RUN cat frontend/angular.json | grep outputPath -A 2
 # Angular Build durchführen
 RUN cd frontend && npm install && npm install --save-dev @types/node && npm run build
-# Debug: Inhalt des Build-Verzeichnisses anzeigen
-RUN ls -la frontend/dist
+# Debug: Inhalt des Build-Verzeichnisses anzeigen und Kopieren ins Zielverzeichnis
+RUN ls -la frontend/dist && ls -la frontend/dist/frontend || true
+# Kopiere Build-Dateien in ein einheitliches Verzeichnis für späteres Kopieren
+RUN mkdir -p /app/frontend-build && \
+    if [ -d frontend/dist/frontend ]; then \
+        cp -r frontend/dist/frontend/* /app/frontend-build/; \
+    elif [ -d frontend/dist ]; then \
+        cp -r frontend/dist/* /app/frontend-build/; \
+    else \
+        echo "<html><body><h1>Jobbig Job Crawler</h1><p>The API is available at /api/</p><p>Info: Frontend-Build ist fehlgeschlagen.</p></body></html>" > /app/frontend-build/index.html; \
+    fi
 
 # Runtime-Phase
 FROM python:3.9-slim
@@ -20,7 +29,7 @@ COPY backend ./backend
 RUN mkdir -p ./backend/static
 
 # Kopiere Frontend-Build aus der Build-Phase
-COPY --from=frontend-build /app/frontend/dist/frontend/ ./backend/static/
+COPY --from=frontend-build /app/frontend-build/ ./backend/static/
 
 # Installiere Abhängigkeiten
 RUN pip install -r backend/requirements.txt
