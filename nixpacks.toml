@@ -1,0 +1,5 @@
+[phases.setup]
+nixPkgs = ['nodejs-14_x']
+
+[phases.install]
+cmds = ['echo "Node.js version: $(node --version)"'] 
