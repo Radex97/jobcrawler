@@ -1,4 +1,6 @@
-const API_URL = process.env.NODE_ENV === 'production' 
+declare const process: any;
+
+const API_URL = (window as any).NODE_ENV === 'production' 
   ? 'https://jobcrawler-production.up.railway.app/'
   : 'http://localhost:5000/';
 

@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && apt-get install -y nodejs && cd frontend && npm install && npm run build"
+buildCommand = "curl -fsSL https://deb.nodesource.com/setup_14.x | bash - && apt-get install -y nodejs && cd frontend && npm install && npm install --save-dev @types/node && npm run build"
 
 [deploy]
 startCommand = "cd backend && pip install -r requirements.txt && gunicorn src.app:app"
