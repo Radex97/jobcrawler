@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 
 # Bedingte Importe für Datenbankfunktionalität - darf nicht fehlschlagen für Healthcheck
 try:
+    # Erstmal versuchen, die benötigten Module zu installieren, falls sie fehlen
+    try:
+        import subprocess
+        logger.info("Versuche, fehlende Datenbankmodule zu installieren...")
+        
+        # Liste der zu installierenden Module
+        db_modules = ["psycopg2-binary", "psycopg", "psycopg2", "python-dotenv"]
+        for module in db_modules:
+            try:
+                subprocess.check_call(["pip", "install", module, "--no-cache-dir"])
+                logger.info(f"Modul {module} erfolgreich installiert")
+            except Exception as e:
+                logger.warning(f"Konnte Modul {module} nicht installieren: {e}")
+    except Exception as e:
+        logger.warning(f"Konnte zusätzliche Module nicht installieren: {e}")
+        
+    # Jetzt versuchen, die Module zu importieren
     import psycopg
     from .database import get_database, save_new_jobs, get_jobs_by_criteria, verify_database_connection, create_tables_if_not_exist
     db_imports_successful = True

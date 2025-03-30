@@ -7,6 +7,6 @@
   },
   "scripts": {
     "build": "cd frontend && npm install && npm run build && mkdir -p ../backend/static && cp -r dist/* ../backend/static/",
-    "start": "cd backend && pip install -r requirements.txt && gunicorn src.app:app"
+    "start": "cd backend && pip install -r requirements.txt && pip install psycopg2-binary psycopg2 psycopg python-dotenv --no-cache-dir && gunicorn src.app:app"
   }
 } 
