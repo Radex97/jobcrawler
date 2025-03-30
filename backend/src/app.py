@@ -7,6 +7,8 @@ import glob
 import time
 import functools
 from .scraping import find_monster_jobs, find_stepstone_jobs
+import psycopg
+from .database import get_database, save_new_jobs, get_jobs_by_criteria, verify_database_connection
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -64,46 +66,66 @@ except Exception as e:
     logger.warning("Anwendung läuft im eingeschränkten Modus ohne Datenbankfunktionalität")
     # Nicht abbrechen, damit der Healthcheck trotzdem funktioniert
 
-# Timeout-Decorator für API-Routen
-def timeout_handler(max_seconds=5):
-    """Decorator, der einen Timeout für eine Funktion setzt"""
+def timeout_handler(timeout_seconds=5):
+    """
+    Ein Decorator, der die Ausführungszeit einer Funktion überwacht und 
+    bei Überschreitung des Timeouts ein Beispielergebnis zurückgibt.
+    """
     def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             start_time = time.time()
-            result = func(*args, **kwargs)
-            elapsed_time = time.time() - start_time
+            logger.info(f"Starte {func.__name__} mit Timeout von {timeout_seconds} Sekunden")
             
-            # Wenn die Funktion zu lange dauert, verwenden wir Beispieldaten
-            if elapsed_time > max_seconds:
-                logger.warning(f"Funktion {func.__name__} hat Timeout überschritten ({elapsed_time:.2f}s > {max_seconds}s)")
+            try:
+                # Führe die Funktion aus
+                result = func(*args, **kwargs)
                 
-                # Beispieldaten für verschiedene Endpunkte
-                if func.__name__ == "get_stepstone":
-                    source = "stepstone (timeout)"
-                    title = request.args.get("title", "")
-                    city = request.args.get("city", "")
-                elif func.__name__ == "get_monster":
-                    source = "monster (timeout)"
-                    title = request.args.get("title", "")
-                    city = request.args.get("city", "")
-                else:
-                    source = "unknown"
-                    title = ""
-                    city = ""
-                    
-                # Timeout-Beispieldaten zurückgeben
-                return jsonify([
-                    {
-                        "title": f"{title} Stelle (Timeout)",
-                        "company": "Timeout GmbH",
-                        "location": city,
-                        "url": f"https://www.{source.split()[0]}.de/",
-                        "source": source
-                    }
-                ])
-            
-            return result
+                # Prüfe, ob der Timeout überschritten wurde
+                elapsed_time = time.time() - start_time
+                if elapsed_time > timeout_seconds:
+                    logger.warning(f"Timeout überschritten: {elapsed_time:.2f}s > {timeout_seconds}s")
+                    # Fallback-Daten basierend auf der Route
+                    if "stepstone" in func.__name__:
+                        return jsonify({
+                            "jobs": [
+                                {
+                                    "title": "Schnelle Beispiel-Anzeige (Timeout)",
+                                    "company": "API Timeout GmbH",
+                                    "location": request.args.get('city', 'Irgendwo'),
+                                    "url": "https://www.stepstone.de/",
+                                    "source": "stepstone (timeout)"
+                                }
+                            ],
+                            "timeoutOccurred": True,
+                            "databaseAvailable": verify_database_connection()
+                        })
+                    elif "monster" in func.__name__:
+                        return jsonify({
+                            "jobs": [
+                                {
+                                    "title": "Schnelle Beispiel-Anzeige (Timeout)",
+                                    "company": "API Timeout GmbH",
+                                    "location": request.args.get('city', 'Irgendwo'),
+                                    "url": "https://www.monster.de/",
+                                    "source": "monster (timeout)"
+                                }
+                            ],
+                            "timeoutOccurred": True,
+                            "databaseAvailable": verify_database_connection()
+                        })
+                
+                return result
+            except Exception as e:
+                logger.error(f"Fehler in {func.__name__}: {e}")
+                # Fallback bei Fehlern
+                return jsonify({
+                    "jobs": [],
+                    "error": str(e),
+                    "timeoutOccurred": False,
+                    "databaseAvailable": verify_database_connection()
+                })
+        
         return wrapper
     return decorator
 
@@ -173,101 +195,113 @@ def api_status():
     })
 
 @app.route("/api/stepstone", methods=["GET"])
-@timeout_handler(max_seconds=8)
+@timeout_handler(timeout_seconds=5)
 def get_stepstone():
-    """ Get jobs from Stepstone """
     start_time = time.time()
-    try:
-        title = request.args.get("title")
-        city = request.args.get("city")
-        
-        # Scraping durchführen (unabhängig von der Datenbank)
-        stepstone_jobs = find_stepstone_jobs(title, city)
-        logger.info(f"Scraping abgeschlossen in {time.time() - start_time:.2f}s")
-        
-        # Wenn die Datenbank verfügbar ist, speichern wir die Jobs
-        if db_available:
-            try:
-                # Datenbank bereinigen
-                refresh_db()
-                
-                # Jobs speichern
-                for item in stepstone_jobs:
-                    job = Job(
-                        title=item["title"],
-                        company=item["company"],
-                        location=item["location"],
-                        url=item["url"],
-                        source="stepstone",
-                    )
-                    db.session.add(job)
-                
-                db.session.commit()
-                logger.info(f"{len(stepstone_jobs)} Stepstone-Jobs in Datenbank gespeichert")
-                
-                # Jobs aus der Datenbank abfragen
-                jobs = Job.query.filter_by(source="stepstone").all()
-                serialized = [serialize_job(j) for j in jobs]
-            except Exception as e:
-                logger.error(f"Datenbankfehler beim Speichern der Stepstone-Jobs: {e}")
-                serialized = stepstone_jobs  # Fallback: gescrapte Jobs direkt zurückgeben
-        else:
-            # Ohne Datenbank geben wir die gescrapten Jobs direkt zurück
-            logger.info("Datenbank nicht verfügbar, gebe gescrapte Jobs direkt zurück")
-            serialized = stepstone_jobs
-        
-        logger.info(f"Route abgeschlossen in {time.time() - start_time:.2f}s")
-        return jsonify(serialized)
-    except Exception as e:
-        logger.error(f"Fehler in Stepstone-Route: {e}")
-        return jsonify({"error": str(e)}), 500
+    logger.info("Stepstone API-Anfrage empfangen")
+    
+    title = request.args.get('title', '')
+    city = request.args.get('city', '')
+    
+    # Protokolliere die Anfrageparameter
+    logger.info(f"Stepstone-Suche: Titel={title}, Stadt={city}")
+    
+    # Starten des Scraping-Prozesses
+    scrape_start = time.time()
+    jobs = find_stepstone_jobs(title, city)
+    scrape_duration = time.time() - scrape_start
+    logger.info(f"Stepstone-Scraping abgeschlossen in {scrape_duration:.2f}s, {len(jobs)} Jobs gefunden")
+    
+    # Versuche, die Jobs in der Datenbank zu speichern
+    db_available = verify_database_connection()
+    if db_available:
+        try:
+            save_new_jobs(jobs)
+            logger.info(f"Jobs in Datenbank gespeichert")
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern in Datenbank: {e}")
+    
+    response = {
+        "jobs": jobs,
+        "databaseAvailable": db_available,
+        "timeoutOccurred": False  # Wird durch den Decorator überschrieben, wenn nötig
+    }
+    
+    logger.info(f"Stepstone-Route abgeschlossen in {time.time() - start_time:.2f}s")
+    return jsonify(response)
 
 @app.route("/api/monster", methods=["GET"])
-@timeout_handler(max_seconds=8)
+@timeout_handler(timeout_seconds=5)
 def get_monster():
-    """ Get jobs from Monster """
     start_time = time.time()
+    logger.info("Monster API-Anfrage empfangen")
+    
+    title = request.args.get('title', '')
+    city = request.args.get('city', '')
+    
+    # Protokolliere die Anfrageparameter
+    logger.info(f"Monster-Suche: Titel={title}, Stadt={city}")
+    
+    # Starten des Scraping-Prozesses
+    scrape_start = time.time()
+    jobs = find_monster_jobs(title, city)
+    scrape_duration = time.time() - scrape_start
+    logger.info(f"Monster-Scraping abgeschlossen in {scrape_duration:.2f}s, {len(jobs)} Jobs gefunden")
+    
+    # Versuche, die Jobs in der Datenbank zu speichern
+    db_available = verify_database_connection()
+    if db_available:
+        try:
+            save_new_jobs(jobs)
+            logger.info(f"Jobs in Datenbank gespeichert")
+        except Exception as e:
+            logger.error(f"Fehler beim Speichern in Datenbank: {e}")
+    
+    response = {
+        "jobs": jobs,
+        "databaseAvailable": db_available,
+        "timeoutOccurred": False  # Wird durch den Decorator überschrieben, wenn nötig
+    }
+    
+    logger.info(f"Monster-Route abgeschlossen in {time.time() - start_time:.2f}s")
+    return jsonify(response)
+
+@app.route('/api/db', methods=['GET'])
+def get_db_jobs():
+    """Endpoint to retrieve jobs from the database"""
+    start_time = time.time()
+    
+    title = request.args.get('title', '')
+    city = request.args.get('city', '')
+    source = request.args.get('source', '')
+    
+    logger.info(f"Datenbank-Abfrage: Titel={title}, Stadt={city}, Quelle={source}")
+    
+    # Versuche, die Jobs aus der Datenbank zu laden
+    db_available = verify_database_connection()
+    if not db_available:
+        return jsonify({
+            "jobs": [],
+            "databaseAvailable": False,
+            "error": "Datenbank nicht verfügbar"
+        })
+    
     try:
-        title = request.args.get("title")
-        city = request.args.get("city")
+        jobs = get_jobs_by_criteria(title, city, source)
+        logger.info(f"{len(jobs)} Jobs aus Datenbank abgerufen in {time.time() - start_time:.2f}s")
         
-        # Scraping durchführen (unabhängig von der Datenbank)
-        monster_jobs = find_monster_jobs(title, city)
-        logger.info(f"Scraping abgeschlossen in {time.time() - start_time:.2f}s")
-        
-        # Wenn die Datenbank verfügbar ist, speichern wir die Jobs
-        if db_available:
-            try:
-                # Datenbank bereinigen
-                refresh_db()
-                
-                # Jobs speichern
-                for item in monster_jobs:
-                    job = Job(
-                        title=item["title"],
-                        company=item["company"],
-                        location=item["location"],
-                        url=item["url"],
-                        source="monster",
-                    )
-                    db.session.add(job)
-                
-                db.session.commit()
-                logger.info(f"{len(monster_jobs)} Monster-Jobs in Datenbank gespeichert")
-                
-                # Jobs aus der Datenbank abfragen
-                jobs = Job.query.filter_by(source="monster").all()
-                serialized = [serialize_job(j) for j in jobs]
-            except Exception as e:
-                logger.error(f"Datenbankfehler beim Speichern der Monster-Jobs: {e}")
-                serialized = monster_jobs  # Fallback: gescrapte Jobs direkt zurückgeben
-        else:
-            # Ohne Datenbank geben wir die gescrapten Jobs direkt zurück
-            logger.info("Datenbank nicht verfügbar, gebe gescrapte Jobs direkt zurück")
-            serialized = monster_jobs
-            
-        logger.info(f"Route abgeschlossen in {time.time() - start_time:.2f}s")
-        return jsonify(serialized)
+        return jsonify({
+            "jobs": jobs,
+            "databaseAvailable": True
+        })
     except Exception as e:
-        logger.error(f"Fehler in Monster-Route: {e}")
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Fehler beim Abrufen aus Datenbank: {e}")
+        return jsonify({
+            "jobs": [],
+            "databaseAvailable": True,
+            "error": str(e)
+        })
+
+def create_app():
+    """Erstellt und konfiguriert die Flask-App"""
+    return app
