@@ -8,7 +8,7 @@ import { Search } from './job-search-form/search';
   templateUrl: './content.component.html',
 })
 export class ContentComponent implements OnInit {
-  jobs: Job[];
+  jobs: Job[] = [];
 
   constructor(private contentService: ContentService) {
     console.log('ContentComponent initialisiert');
@@ -26,10 +26,14 @@ export class ContentComponent implements OnInit {
       .subscribe(
         (jobs) => {
           console.log('Jobs erfolgreich geladen:', jobs);
-          this.jobs = jobs;
+          this.jobs = Array.isArray(jobs) ? jobs : [];
+          if (!Array.isArray(jobs)) {
+            console.error('Unerwartetes Format von jobs:', jobs);
+          }
         },
         (error) => {
           console.error('Fehler beim Laden der Jobs:', error);
+          this.jobs = [];
           alert('Fehler beim Laden der Jobs. Bitte überprüfen Sie die Konsole für Details.');
         }
       );
