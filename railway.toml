@@ -3,7 +3,7 @@ builder = "DOCKERFILE"
 watchPaths = ["backend", "frontend"]
 
 [deploy]
-healthcheckPath = "/"
+healthcheckPath = "/health"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3 
