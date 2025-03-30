@@ -22,29 +22,32 @@ RUN mkdir -p /app/frontend-build && \
 FROM python:3.9-slim
 WORKDIR /app
 
-# Installiere Abhängigkeiten für psycopg2
+# Optimierte Installation der Abhängigkeiten in separaten Schritten
+# und Kombiniere die apt-get Befehle, um die Anzahl der Schichten zu reduzieren
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
-    gcc \
-    python3-dev \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends libpq-dev && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
 
 # Kopiere Anforderungen zuerst für besseres Caching
 COPY backend/requirements.txt .
 
-# Installiere Python-Abhängigkeiten 
-RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir psycopg2-binary psycopg2 psycopg && \
-    pip install --no-cache-dir gunicorn
+# Installiere Python-Abhängigkeiten in separaten Schritten, um Speicher zu sparen
+RUN pip install --no-cache-dir gunicorn
+RUN pip install --no-cache-dir psycopg2-binary 
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Kopiere Backend-Code
 COPY backend/ .
 
 # Kopiere Frontend-Build in den statischen Ordner
 COPY frontend/dist/ static/
+
+# Erstelle statisches Verzeichnis
+RUN mkdir -p static
+
+# Fallback Indexseite, falls kein Frontend vorhanden ist
+RUN echo "<html><body><h1>Jobbig Job Crawler</h1><p>API is running at /api/</p></body></html>" > static/index.html
 
 # Setze Umgebungsvariablen
 ENV PYTHONUNBUFFERED=1
@@ -53,9 +56,9 @@ ENV PORT=8080
 # Exponiere den Port
 EXPOSE 8080
 
-# Füge Healthcheck hinzu - mit kurzem Timeout
-HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+# Füge Healthcheck hinzu
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Starte die Anwendung
-CMD ["gunicorn", "src.app:app", "--bind", "0.0.0.0:$PORT"] 
+# Starte die Anwendung mit reduzierten Workers
+CMD gunicorn src.app:app --bind 0.0.0.0:$PORT --log-level info --timeout 30 --workers 1 

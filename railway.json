@@ -2,10 +2,11 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "DOCKERFILE",
-    "dockerfile": "Dockerfile"
+    "dockerfile": "Dockerfile",
+    "watchPatterns": ["backend/**/*", "Dockerfile", "railway.json"]
   },
   "deploy": {
-    "startCommand": "gunicorn src.app:app --bind 0.0.0.0:$PORT --log-level debug --timeout 30 --workers 2",
+    "startCommand": "gunicorn src.app:app --bind 0.0.0.0:$PORT --log-level info --timeout 30 --workers 1",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 300,
     "restartPolicyType": "ON_FAILURE",

@@ -14,9 +14,21 @@ from datetime import datetime
 # Prozess-Startzeit für Uptime-Berechnungen
 process_start_time = time.time()
 
-# Logging konfigurieren
-logging.basicConfig(level=logging.INFO)
+# Logging konfigurieren - reduziertes Logging-Level für Produktion
+log_level = logging.INFO
+if os.environ.get("DEBUG") == "1":
+    log_level = logging.DEBUG
+
+logging.basicConfig(level=log_level, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Weniger häufig verwendete Module nur bei Bedarf importieren
+def lazy_import(module_name):
+    try:
+        return __import__(module_name)
+    except ImportError as e:
+        logger.warning(f"Modul {module_name} konnte nicht importiert werden: {e}")
+        return None
 
 # Bedingte Importe für Datenbankfunktionalität - darf nicht fehlschlagen für Healthcheck
 try:
@@ -209,13 +221,18 @@ def create_app():
     
     # WICHTIG: Der Healthcheck muss sofort reagieren - vor allen anderen Routen definieren
     @app.route("/health")
-    def health():
-        """
-        Health check endpoint - gibt sofort 200 OK zurück ohne jegliche Datenbankprüfung
-        oder aufwändige Operationen, da dieser Endpunkt vom Kubernetes-Healthcheck verwendet wird
-        """
-        return "OK", 200
-
+    def health_check():
+        """Einfacher Health-Check-Endpunkt für Railway"""
+        return jsonify({
+            "status": "ok",
+            "timestamp": datetime.now().isoformat()
+        })
+        
+    @app.route("/")
+    def index():
+        """Hauptroute, die zum statischen Frontend weiterleitet"""
+        return send_from_directory(app.static_folder, 'index.html')
+    
     @app.route("/diagnostics")
     def diagnostics():
         """Diagnostik-Endpoint zur Fehlersuche"""
