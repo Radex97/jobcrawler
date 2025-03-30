@@ -2,7 +2,12 @@ from .models import Job, db, connect_db, refresh_db, serialize_job
 from flask import Flask, cli, request, jsonify, send_from_directory
 from flask_cors import CORS
 import os
+import logging
 from .scraping import find_monster_jobs, find_stepstone_jobs
+
+# Logging konfigurieren
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # creating the Flask application
 app = Flask(__name__, static_folder='static', static_url_path='')
@@ -14,7 +19,7 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 try:
     cli.load_dotenv(".env")
 except:
-    print("Keine .env Datei gefunden oder Fehler beim Laden")
+    logger.info("Keine .env Datei gefunden oder Fehler beim Laden")
 
 # get DB_URI from environ variable (useful for production/testing) or,
 # if not set there, use development local db.
@@ -31,19 +36,45 @@ app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "secret123")
 try:
     connect_db(app)
     db.create_all()
-    print("Datenbank erfolgreich verbunden und Tabellen erstellt")
+    logger.info("Datenbank erfolgreich verbunden und Tabellen erstellt")
 except Exception as e:
-    print(f"Fehler bei der Datenbankverbindung: {e}")
+    logger.error(f"Fehler bei der Datenbankverbindung: {e}")
     # Nicht abbrechen, damit der Healthcheck trotzdem funktioniert
 
-@app.route("/")
-def serve():
-    """Serve the frontend application oder health check"""
-    try:
-        return send_from_directory(app.static_folder, 'index.html')
-    except Exception as e:
-        print(f"Fehler beim Serving der Index-Datei: {e}")
-        return "Jobbig API is running", 200
+# Überprüfung des statischen Ordners
+@app.before_first_request
+def check_static_folder():
+    static_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static')
+    logger.info(f"Static folder path: {static_path}")
+    
+    # Prüfen, ob der statische Ordner existiert
+    if os.path.exists(static_path):
+        logger.info(f"Static folder exists: {os.listdir(static_path)}")
+    else:
+        logger.warning(f"Static folder does not exist: {static_path}")
+        try:
+            os.makedirs(static_path, exist_ok=True)
+            with open(os.path.join(static_path, 'index.html'), 'w') as f:
+                f.write("<html><body><h1>Jobbig Job Crawler</h1><p>The API is available at /api/</p></body></html>")
+            logger.info("Created fallback index.html")
+        except Exception as e:
+            logger.error(f"Error creating static folder: {e}")
+
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def serve_static(path):
+    """Serve static files or the SPA"""
+    logger.info(f"Request for path: {path}")
+    
+    if path and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        try:
+            logger.info(f"Serving index.html for path: {path}")
+            return send_from_directory(app.static_folder, 'index.html')
+        except Exception as e:
+            logger.error(f"Error serving index.html: {e}")
+            return "Jobbig API is running", 200
 
 @app.route("/health")
 def health():
@@ -74,7 +105,7 @@ def get_stepstone():
         serialized = [serialize_job(j) for j in jobs]
         return jsonify(serialized)
     except Exception as e:
-        print(f"Fehler in Stepstone-Route: {e}")
+        logger.error(f"Fehler in Stepstone-Route: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route("/api/monster", methods=["GET"])
@@ -101,5 +132,5 @@ def get_monster():
         serialized = [serialize_job(j) for j in jobs]
         return jsonify(serialized)
     except Exception as e:
-        print(f"Fehler in Monster-Route: {e}")
+        logger.error(f"Fehler in Monster-Route: {e}")
         return jsonify({"error": str(e)}), 500
