@@ -22,8 +22,7 @@ RUN mkdir -p /app/frontend-build && \
 FROM python:3.9-slim
 WORKDIR /app
 
-# Optimierte Installation der Abhängigkeiten in separaten Schritten
-# und Kombiniere die apt-get Befehle, um die Anzahl der Schichten zu reduzieren
+# Optimierte Installation der Abhängigkeiten 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libpq-dev && \
     apt-get clean && \
@@ -40,14 +39,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Kopiere Backend-Code
 COPY backend/ .
 
-# Kopiere Frontend-Build in den statischen Ordner
-COPY frontend/dist/ static/
-
-# Erstelle statisches Verzeichnis
-RUN mkdir -p static
-
-# Fallback Indexseite, falls kein Frontend vorhanden ist
-RUN echo "<html><body><h1>Jobbig Job Crawler</h1><p>API is running at /api/</p></body></html>" > static/index.html
+# Erstelle statisches Verzeichnis mit einer Fallback-Indexseite und CSS
+RUN mkdir -p static && \
+    echo "<html><head><title>Jobbig Job Crawler</title><link rel=\"stylesheet\" href=\"styles.css\"></head><body><div class=\"container\"><h1>Jobbig Job Crawler</h1><p>Die API ist unter /api/ verfügbar</p><ul><li><a href=\"/api/status\">API Status</a></li><li><a href=\"/diagnostics\">Diagnose</a></li></ul></div></body></html>" > static/index.html && \
+    echo "body { font-family: Arial, sans-serif; margin: 0; padding: 0; background-color: #f5f5f5; } .container { max-width: 800px; margin: 50px auto; padding: 20px; background-color: white; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); } h1 { color: #333; } a { color: #0066cc; }" > static/styles.css
 
 # Setze Umgebungsvariablen
 ENV PYTHONUNBUFFERED=1
