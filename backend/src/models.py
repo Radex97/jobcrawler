@@ -1,9 +1,26 @@
 """SQLAlchemy models for Jobbig."""
 
 import logging
+import os
 
 # Logging konfigurieren
 logger = logging.getLogger(__name__)
+
+# Versuchen, zusätzliche Module zu installieren, falls sie fehlen
+try:
+    import subprocess
+    logger.info("Versuche, fehlende Datenbankmodule zu installieren...")
+    
+    # Liste der zu installierenden Module
+    db_modules = ["Flask-SQLAlchemy==3.0.5", "SQLAlchemy==1.4.41", "psycopg2-binary", "psycopg", "psycopg2"]
+    for module in db_modules:
+        try:
+            subprocess.check_call(["pip", "install", module, "--no-cache-dir"])
+            logger.info(f"Modul {module} erfolgreich installiert")
+        except Exception as e:
+            logger.warning(f"Konnte Modul {module} nicht installieren: {e}")
+except Exception as e:
+    logger.warning(f"Konnte zusätzliche Module nicht installieren: {e}")
 
 # Bedingte Importe für SQLAlchemy - darf nicht fehlschlagen für Healthcheck
 try:
@@ -38,6 +55,13 @@ if sqlalchemy_available:
 
         source = db.Column(db.String(200), nullable=False)
 
+else:
+    # Dummy-Klasse für den Fall, dass SQLAlchemy nicht verfügbar ist
+    class Job:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+
 
 def refresh_db():
     """ Delete all job entries and restart the counting """
@@ -65,6 +89,21 @@ def connect_db(app):
     if not sqlalchemy_available:
         logger.warning("SQLAlchemy nicht verfügbar, Datenbank kann nicht verbunden werden")
         return False
+    
+    # Prüfe, ob DATABASE_URL gesetzt ist
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        database_url = os.environ.get("DATABASE_PUBLIC_URL")
+    
+    if not database_url:
+        logger.warning("Keine Datenbank-URL gefunden, Datenbank kann nicht verbunden werden")
+        return False
+        
+    # Railway verwendet 'postgres://' anstatt 'postgresql://'
+    if database_url and database_url.startswith("postgres://"):
+        database_url = database_url.replace("postgres://", "postgresql://", 1)
+        app.config["SQLALCHEMY_DATABASE_URI"] = database_url
+        logger.info("Datenbankstring von postgres:// auf postgresql:// korrigiert")
         
     try:
         db.app = app
@@ -72,7 +111,7 @@ def connect_db(app):
         logger.info("Datenbank erfolgreich verbunden")
         return True
     except Exception as e:
-        logger.error(f"Fehler beim Verbinden der Datenbank: {e}")
+        logger.error(f"Fehler beim Verbinden der Datenbank: {type(e).__name__}: {e}")
         return False
 
 
@@ -87,12 +126,12 @@ def serialize_job(job):
             return job
             
         return {
-            "id": job.id,
-            "title": job.title,
-            "company": job.company,
-            "location": job.location,
-            "url": job.url,
-            "source": job.source,
+            "id": getattr(job, 'id', 0),
+            "title": getattr(job, 'title', ''),
+            "company": getattr(job, 'company', ''),
+            "location": getattr(job, 'location', ''),
+            "url": getattr(job, 'url', ''),
+            "source": getattr(job, 'source', ''),
         }
     except Exception as e:
         logger.error(f"Fehler beim Serialisieren eines Jobs: {e}")

@@ -22,23 +22,29 @@ RUN mkdir -p /app/frontend-build && \
 FROM python:3.9-slim
 WORKDIR /app
 
-# Kopiere Backend
-COPY backend ./backend
+# Installiere Abhängigkeiten für psycopg2
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    gcc \
+    python3-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
-# Erstelle statischen Ordner
-RUN mkdir -p ./backend/static
+# Kopiere Anforderungen zuerst für besseres Caching
+COPY backend/requirements.txt .
 
-# Kopiere Frontend-Build aus der Build-Phase
-COPY --from=frontend-build /app/frontend-build/ ./backend/static/
+# Installiere Python-Abhängigkeiten 
+RUN pip install --no-cache-dir -r requirements.txt && \
+    pip install --no-cache-dir psycopg2-binary psycopg2 psycopg && \
+    pip install --no-cache-dir gunicorn
 
-# Installiere Abhängigkeiten
-RUN pip install -r backend/requirements.txt gunicorn psycopg2-binary
+# Kopiere Backend-Code
+COPY backend/ .
 
-# Debug: Inhalt des statischen Ordners anzeigen
-RUN ls -la ./backend/static/
-
-# Stelle sicher, dass der statische Ordner vorhanden ist und lesbare Berechtigungen hat
-RUN chmod -R 755 ./backend/static
+# Kopiere Frontend-Build in den statischen Ordner
+COPY frontend/dist/ static/
 
 # Setze Umgebungsvariablen
 ENV PYTHONUNBUFFERED=1
@@ -51,5 +57,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Starte die Anwendung mit Debug-Ausgabe - kürzeres Timeout für bessere Antwortzeiten
-CMD cd backend && python -m gunicorn.app.wsgiapp --bind 0.0.0.0:${PORT} --log-level debug --access-logfile - --error-logfile - --timeout 30 --workers 2 src.app:app 
+# Starte die Anwendung
+CMD ["gunicorn", "src.app:app", "--bind", "0.0.0.0:$PORT"] 
