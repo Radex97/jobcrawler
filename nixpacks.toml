@@ -2,4 +2,9 @@
 nixPkgs = ['nodejs-14_x']
 
 [phases.install]
-cmds = ['echo "Node.js version: $(node --version)"'] 
+cmds = [
+  'echo "Node.js version: $(node --version)"',
+  'echo "Current directory: $(pwd)"',
+  'ls -la',
+  'ls -la frontend || echo "No frontend directory"'
+] 

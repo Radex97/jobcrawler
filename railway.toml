@@ -1,6 +1,6 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd frontend && npm install && npm install --save-dev @types/node && npm run build && cp -r dist/frontend/* ../backend/static/"
+buildCommand = "cd frontend && npm install && npm install --save-dev @types/node && npm run build && mkdir -p ../backend/static && cp -r dist/* ../backend/static/ || echo 'Copy failed, checking directories:' && ls -la frontend/dist/ || echo 'dist not found'"
 
 [deploy]
 startCommand = "cd backend && pip install -r requirements.txt && gunicorn src.app:app"
