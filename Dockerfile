@@ -47,5 +47,9 @@ ENV PORT=8080
 # Exponiere den Port
 EXPOSE 8080
 
-# Starte die Anwendung mit Debug-Ausgabe
-CMD cd backend && gunicorn --bind 0.0.0.0:${PORT} --log-level debug --access-logfile - --error-logfile - src.app:app 
+# Füge Healthcheck hinzu - mit kurzem Timeout
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:${PORT}/health || exit 1
+
+# Starte die Anwendung mit Debug-Ausgabe - kürzeres Timeout für bessere Antwortzeiten
+CMD cd backend && gunicorn --bind 0.0.0.0:${PORT} --log-level debug --access-logfile - --error-logfile - --timeout 5 src.app:app 
