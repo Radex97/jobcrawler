@@ -6,7 +6,13 @@ import logging
 import glob
 import time
 import functools
+import socket
+import sys
 from .scraping import find_monster_jobs, find_stepstone_jobs
+from datetime import datetime
+
+# Prozess-Startzeit für Uptime-Berechnungen
+process_start_time = time.time()
 
 # Logging konfigurieren
 logging.basicConfig(level=logging.INFO)
@@ -53,6 +59,48 @@ if not os.path.exists(static_dir):
     static_dir = '/app/backend/static'
     logger.info(f"Static folder still not found, using absolute path: {static_dir}")
 
+# Funktion zur Erfassung von System-Informationen
+def get_system_info():
+    """Sammelt System-Informationen für Diagnose-Zwecke"""
+    info = {
+        "os": sys.platform,
+        "python_version": sys.version,
+        "environment": os.environ.get("RAILWAY_ENVIRONMENT", "unbekannt"),
+        "hostname": socket.gethostname()
+    }
+    
+    # Prüfe auf bestimmte Umgebungen
+    if os.environ.get("RAILWAY_PUBLIC_DOMAIN"):
+        info["environment"] = "railway"
+        info["domain"] = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    elif os.environ.get("HEROKU_APP_NAME"):
+        info["environment"] = "heroku"
+    
+    # Speichernutzung (wenn psutil verfügbar ist)
+    try:
+        import psutil
+        process = psutil.Process(os.getpid())
+        memory_info = process.memory_info()
+        info["memory"] = {
+            "rss_mb": round(memory_info.rss / (1024 * 1024), 2),
+            "vms_mb": round(memory_info.vms / (1024 * 1024), 2),
+            "percent": process.memory_percent()
+        }
+    except ImportError:
+        # Wenn psutil nicht verfügbar ist, versuche einige grundlegende Informationen
+        import resource
+        try:
+            rusage = resource.getrusage(resource.RUSAGE_SELF)
+            info["memory"] = {
+                "max_rss_kb": rusage.ru_maxrss,
+                "shared_kb": rusage.ru_ixrss,
+                "unshared_kb": rusage.ru_idrss
+            }
+        except Exception as e:
+            logger.warning(f"Konnte keine Speichernutzung erfassen: {e}")
+    
+    return info
+
 # Funktion zum Erstellen der Flask-App
 def create_app():
     """Erstellt und konfiguriert die Flask-App"""
@@ -61,6 +109,11 @@ def create_app():
     
     # activate CORS for flask app
     CORS(app, resources={r"/*": {"origins": "*"}})
+    
+    # Log wichtige Startup-Informationen
+    logger.info(f"Flask-App wird mit Python {sys.version} auf {sys.platform} gestartet")
+    logger.info(f"Arbeitsverzeichnis: {os.getcwd()}")
+    logger.info(f"Railway-Umgebungsvariablen: {[k for k in os.environ.keys() if k.startswith('RAILWAY')]}")
     
     # load .env variables
     try:
@@ -84,12 +137,33 @@ def create_app():
     db_available = False
 
     try:
-        connect_db(app)
-        db.create_all()
-        logger.info("Datenbank erfolgreich verbunden und Tabellen erstellt")
-        db_available = True
+        # Versuche mehrmals, die Datenbankverbindung herzustellen
+        for attempt in range(3):
+            try:
+                logger.info(f"Versuche Datenbankverbindung herzustellen (Versuch {attempt+1}/3)...")
+                connect_db(app)
+                # Prüfe, ob die Datenbank tatsächlich verbunden ist
+                if db_imports_successful and verify_database_connection():
+                    db.create_all()
+                    logger.info("Datenbank erfolgreich verbunden und Tabellen erstellt")
+                    db_available = True
+                    break
+                else:
+                    logger.warning("Verbindung zur Datenbank konnte nicht verifiziert werden")
+                    if attempt < 2:
+                        logger.info("Warte 3 Sekunden vor dem nächsten Versuch...")
+                        time.sleep(3)
+            except Exception as e:
+                logger.error(f"Fehler bei Datenbankverbindungsversuch {attempt+1}: {type(e).__name__}: {e}")
+                if attempt < 2:
+                    logger.info("Warte 3 Sekunden vor dem nächsten Versuch...")
+                    time.sleep(3)
+        
+        if not db_available:
+            logger.error("Datenbankverbindung konnte nach mehreren Versuchen nicht hergestellt werden")
+            logger.warning("Anwendung läuft im eingeschränkten Modus ohne Datenbankfunktionalität")
     except Exception as e:
-        logger.error(f"Fehler bei der Datenbankverbindung: {e}")
+        logger.error(f"Unerwarteter Fehler bei der Datenbankinitialisierung: {type(e).__name__}: {e}")
         logger.warning("Anwendung läuft im eingeschränkten Modus ohne Datenbankfunktionalität")
         # Nicht abbrechen, damit der Healthcheck trotzdem funktioniert
 
@@ -124,6 +198,86 @@ def create_app():
         oder aufwändige Operationen, da dieser Endpunkt vom Kubernetes-Healthcheck verwendet wird
         """
         return "OK", 200
+
+    @app.route("/diagnostics")
+    def diagnostics():
+        """Diagnostik-Endpoint zur Fehlersuche"""
+        # Versuche Verbindung zur Datenbank herzustellen
+        db_connection_info = {
+            "connected": False,
+            "modules_available": db_imports_successful
+        }
+        
+        # Teste Datenbankverbindung direkt
+        try:
+            start_time = time.time()
+            db_connected = verify_database_connection()
+            connection_duration = time.time() - start_time
+            
+            db_connection_info.update({
+                "connected": db_connected,
+                "connection_duration_seconds": round(connection_duration, 3),
+                "environment_vars": {
+                    "DATABASE_URL": "vorhanden" if os.environ.get("DATABASE_URL") else "nicht gesetzt",
+                    "DATABASE_PUBLIC_URL": "vorhanden" if os.environ.get("DATABASE_PUBLIC_URL") else "nicht gesetzt",
+                    "POSTGRES_URL": "vorhanden" if os.environ.get("POSTGRES_URL") else "nicht gesetzt",
+                    "PGDATABASE": "vorhanden" if os.environ.get("PGDATABASE") else "nicht gesetzt"
+                }
+            })
+            
+            # Wenn verbunden, hole weitere Informationen
+            if db_connected:
+                conn = get_database()
+                if conn:
+                    with conn.cursor() as cur:
+                        # PostgreSQL Version
+                        cur.execute("SELECT version()")
+                        pg_version = cur.fetchone()[0]
+                        
+                        # Verbindungsinformationen
+                        cur.execute("SELECT current_database(), current_user, inet_server_addr(), inet_server_port(), pg_backend_pid()")
+                        db_info = cur.fetchone()
+                        
+                        # Aktuelle Transaktionen
+                        cur.execute("SELECT count(*) FROM pg_stat_activity")
+                        active_connections = cur.fetchone()[0]
+                        
+                        db_connection_info.update({
+                            "postgres_version": pg_version,
+                            "current_database": db_info[0],
+                            "current_user": db_info[1],
+                            "server_addr": str(db_info[2]),
+                            "server_port": db_info[3],
+                            "backend_pid": db_info[4],
+                            "active_connections": active_connections
+                        })
+                    conn.close()
+        except Exception as e:
+            logger.error(f"Fehler bei der Diagnose-Datenbankverbindung: {type(e).__name__}: {e}")
+            db_connection_info["error"] = f"{type(e).__name__}: {str(e)}"
+        
+        # Systeminfo mit mehr Details
+        system_info = get_system_info()
+        system_info.update({
+            "python_version": sys.version,
+            "platform": sys.platform,
+            "hostname": socket.gethostname(),
+            "process_id": os.getpid(),
+            "railway_vars": {k: v[:20] + "..." if isinstance(v, str) and len(v) > 20 else v 
+                          for k, v in os.environ.items() if k.startswith("RAILWAY_")}
+        })
+        
+        return jsonify({
+            "system_info": system_info,
+            "database": db_connection_info,
+            "static_files": {
+                "path": app.static_folder,
+                "exists": os.path.exists(app.static_folder),
+                "files": os.listdir(app.static_folder) if os.path.exists(app.static_folder) else []
+            },
+            "timestamp": datetime.now().isoformat(),
+            "uptime_seconds": int(time.time() - process_start_time)
+        })
     
     @app.route('/', defaults={'path': ''})
     @app.route('/<path:path>')
@@ -143,7 +297,7 @@ def create_app():
                 return "Jobbig API is running. (Error serving frontend)", 200
     
     # Timeout-Decorator für API-Routen
-    def timeout_handler(timeout_seconds=5):
+    def timeout_handler(timeout_seconds=15):  # Timeout von 5 auf 15 Sekunden erhöht
         """
         Ein Decorator, der die Ausführungszeit einer Funktion überwacht und 
         bei Überschreitung des Timeouts ein Beispielergebnis zurückgibt.
@@ -175,7 +329,8 @@ def create_app():
                                     }
                                 ],
                                 "timeoutOccurred": True,
-                                "databaseAvailable": verify_database_connection()
+                                "databaseAvailable": verify_database_connection(),
+                                "executionTime": elapsed_time
                             })
                         elif "monster" in func.__name__:
                             return jsonify({
@@ -189,7 +344,8 @@ def create_app():
                                     }
                                 ],
                                 "timeoutOccurred": True,
-                                "databaseAvailable": verify_database_connection()
+                                "databaseAvailable": verify_database_connection(),
+                                "executionTime": elapsed_time
                             })
                     
                     return result
@@ -200,7 +356,8 @@ def create_app():
                         "jobs": [],
                         "error": str(e),
                         "timeoutOccurred": False,
-                        "databaseAvailable": verify_database_connection()
+                        "databaseAvailable": verify_database_connection(),
+                        "executionTime": time.time() - start_time
                     })
             
             return wrapper
@@ -209,32 +366,61 @@ def create_app():
     @app.route("/api/status")
     def api_status():
         """API Status Check - kann länger dauern, da hier die Datenbankverbindung geprüft wird"""
-        db_status = verify_database_connection()
-        db_schema_ok = False
+        start_time = time.time()
         
-        # Versuche Tabellen zu erstellen, falls nötig und DB verfügbar ist
-        if db_status and db_imports_successful:
-            db_schema_ok = create_tables_if_not_exist()
-            if db_schema_ok:
-                logger.info("Datenbank-Schema erfolgreich überprüft/erstellt")
-            else:
-                logger.warning("Datenbank-Schema konnte nicht erstellt werden")
+        db_status = False
+        db_schema_ok = False
+        connection_error = None
+        
+        # Versuche Datenbankverbindung zu überprüfen
+        try:
+            db_status = verify_database_connection()
+            logger.info(f"Datenbank-Status: {'verbunden' if db_status else 'nicht verbunden'}")
+            
+            # Versuche Tabellen zu erstellen, falls nötig und DB verfügbar ist
+            if db_status and db_imports_successful:
+                db_schema_ok = create_tables_if_not_exist()
+                if db_schema_ok:
+                    logger.info("Datenbank-Schema erfolgreich überprüft/erstellt")
+                else:
+                    logger.warning("Datenbank-Schema konnte nicht erstellt werden")
+        except Exception as e:
+            logger.error(f"Fehler bei der Datenbankstatusüberprüfung: {type(e).__name__}: {e}")
+            connection_error = f"{type(e).__name__}: {str(e)}"
+        
+        # Railway- und Datenbankumgebungsvariablen prüfen
+        railway_vars = {k: "vorhanden" for k in os.environ if k.startswith("RAILWAY_")}
+        db_vars = {
+            "DATABASE_URL": "vorhanden" if os.environ.get("DATABASE_URL") else "nicht gesetzt",
+            "DATABASE_PUBLIC_URL": "vorhanden" if os.environ.get("DATABASE_PUBLIC_URL") else "nicht gesetzt",
+            "POSTGRES_URL": "vorhanden" if os.environ.get("POSTGRES_URL") else "nicht gesetzt"
+        }
+        
+        # Ermittle die Ausführungszeit
+        execution_time = time.time() - start_time
         
         return jsonify({
             "status": "online",
-            "database": "connected" if db_status else "disconnected",
-            "database_schema": "ok" if db_schema_ok else "not_available",
+            "database": {
+                "status": "connected" if db_status else "disconnected",
+                "schema": "ok" if db_schema_ok else "not_available",
+                "imports": "available" if db_imports_successful else "unavailable",
+                "error": connection_error
+            },
+            "environment": {
+                "railway": railway_vars,
+                "database": db_vars,
+                "host": socket.gethostname(),
+                "python": sys.version
+            },
             "version": "1.0.0",
-            "db_imports": "available" if db_imports_successful else "unavailable",
-            "env_vars": {
-                "PORT": os.environ.get("PORT", "nicht gesetzt"),
-                "DATABASE_URL": "vorhanden" if os.environ.get("DATABASE_URL") else "nicht gesetzt",
-                "RAILWAY_PUBLIC_DOMAIN": os.environ.get("RAILWAY_PUBLIC_DOMAIN", "nicht gesetzt")
-            }
+            "uptime_seconds": int(time.time() - process_start_time),
+            "response_time_seconds": round(execution_time, 3),
+            "timestamp": datetime.now().isoformat()
         })
     
     @app.route("/api/stepstone", methods=["GET"])
-    @timeout_handler(timeout_seconds=5)
+    @timeout_handler(timeout_seconds=15)  # Timeout erhöht
     def get_stepstone():
         start_time = time.time()
         logger.info("Stepstone API-Anfrage empfangen")
@@ -260,17 +446,20 @@ def create_app():
             except Exception as e:
                 logger.error(f"Fehler beim Speichern in Datenbank: {e}")
         
+        execution_time = time.time() - start_time
         response = {
             "jobs": jobs,
             "databaseAvailable": db_available,
-            "timeoutOccurred": False  # Wird durch den Decorator überschrieben, wenn nötig
+            "timeoutOccurred": False,  # Wird durch den Decorator überschrieben, wenn nötig
+            "executionTime": execution_time,
+            "scrapingTime": scrape_duration
         }
         
-        logger.info(f"Stepstone-Route abgeschlossen in {time.time() - start_time:.2f}s")
+        logger.info(f"Stepstone-Route abgeschlossen in {execution_time:.2f}s")
         return jsonify(response)
     
     @app.route("/api/monster", methods=["GET"])
-    @timeout_handler(timeout_seconds=5)
+    @timeout_handler(timeout_seconds=15)  # Timeout erhöht
     def get_monster():
         start_time = time.time()
         logger.info("Monster API-Anfrage empfangen")
@@ -296,13 +485,16 @@ def create_app():
             except Exception as e:
                 logger.error(f"Fehler beim Speichern in Datenbank: {e}")
         
+        execution_time = time.time() - start_time
         response = {
             "jobs": jobs,
             "databaseAvailable": db_available,
-            "timeoutOccurred": False  # Wird durch den Decorator überschrieben, wenn nötig
+            "timeoutOccurred": False,  # Wird durch den Decorator überschrieben, wenn nötig
+            "executionTime": execution_time,
+            "scrapingTime": scrape_duration
         }
         
-        logger.info(f"Monster-Route abgeschlossen in {time.time() - start_time:.2f}s")
+        logger.info(f"Monster-Route abgeschlossen in {execution_time:.2f}s")
         return jsonify(response)
     
     @app.route('/api/db', methods=['GET'])
@@ -322,23 +514,27 @@ def create_app():
             return jsonify({
                 "jobs": [],
                 "databaseAvailable": False,
-                "error": "Datenbank nicht verfügbar"
+                "error": "Datenbank nicht verfügbar",
+                "executionTime": time.time() - start_time
             })
         
         try:
             jobs = get_jobs_by_criteria(title, city, source)
-            logger.info(f"{len(jobs)} Jobs aus Datenbank abgerufen in {time.time() - start_time:.2f}s")
+            execution_time = time.time() - start_time
+            logger.info(f"{len(jobs)} Jobs aus Datenbank abgerufen in {execution_time:.2f}s")
             
             return jsonify({
                 "jobs": jobs,
-                "databaseAvailable": True
+                "databaseAvailable": True,
+                "executionTime": execution_time
             })
         except Exception as e:
             logger.error(f"Fehler beim Abrufen aus Datenbank: {e}")
             return jsonify({
                 "jobs": [],
                 "databaseAvailable": True,
-                "error": str(e)
+                "error": str(e),
+                "executionTime": time.time() - start_time
             })
             
     return app
