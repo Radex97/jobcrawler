@@ -10,13 +10,28 @@ import { Search } from './job-search-form/search';
 export class ContentComponent implements OnInit {
   jobs: Job[];
 
-  constructor(private contentService: ContentService) {}
+  constructor(private contentService: ContentService) {
+    console.log('ContentComponent initialisiert');
+  }
 
-  ngOnInit(): void {}
+  ngOnInit(): void {
+    console.log('ContentComponent ngOnInit');
+  }
 
   getJobs({ source, title, city }: Search) {
+    console.log('ContentComponent.getJobs() aufgerufen mit:', { source, title, city });
+    
     this.contentService
       .getJobs(source, title, city)
-      .subscribe((jobs) => (this.jobs = jobs));
+      .subscribe(
+        (jobs) => {
+          console.log('Jobs erfolgreich geladen:', jobs);
+          this.jobs = jobs;
+        },
+        (error) => {
+          console.error('Fehler beim Laden der Jobs:', error);
+          alert('Fehler beim Laden der Jobs. Bitte überprüfen Sie die Konsole für Details.');
+        }
+      );
   }
 }
