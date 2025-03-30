@@ -1,9 +1,9 @@
 [build]
 builder = "nixpacks"
-buildCommand = "cd frontend && npm install && npm run build"
+buildCommand = "curl -fsSL https://deb.nodesource.com/setup_16.x | bash - && apt-get install -y nodejs && cd frontend && npm install && npm run build"
 
 [deploy]
-startCommand = "cd backend && pipenv install && pipenv run gunicorn src.app:app"
+startCommand = "cd backend && pip install -r requirements.txt && gunicorn src.app:app"
 healthcheckPath = "/"
 healthcheckTimeout = 100
 restartPolicyType = "on_failure"
