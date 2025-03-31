@@ -22,11 +22,33 @@ RUN mkdir -p /app/frontend-build && \
 FROM python:3.9-slim
 WORKDIR /app
 
-# Optimierte Installation der Abhängigkeiten 
+# Installiere Chrome, ChromeDriver und andere Abhängigkeiten
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends libpq-dev && \
+    apt-get install -y --no-install-recommends \
+    libpq-dev \
+    wget \
+    gnupg \
+    unzip \
+    curl \
+    xvfb \
+    gnupg2 && \
+    # Chrome installieren
+    wget -q -O - https://dl-ssl.google.com/linux/linux_signing_key.pub | apt-key add - && \
+    echo "deb [arch=amd64] http://dl.google.com/linux/chrome/deb/ stable main" >> /etc/apt/sources.list.d/google.list && \
+    apt-get update && \
+    apt-get install -y google-chrome-stable && \
+    # Aufräumen
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
+
+# Chrome-Version überprüfen und passenden ChromeDriver herunterladen
+RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1) && \
+    wget -q "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}" -O CHROMEVER && \
+    wget -q "https://chromedriver.storage.googleapis.com/$(cat CHROMEVER)/chromedriver_linux64.zip" && \
+    unzip chromedriver_linux64.zip && \
+    mv chromedriver /usr/local/bin/ && \
+    chmod +x /usr/local/bin/chromedriver && \
+    rm chromedriver_linux64.zip CHROMEVER
 
 # Kopiere Anforderungen zuerst für besseres Caching
 COPY backend/requirements.txt .
@@ -47,6 +69,7 @@ RUN mkdir -p static && \
 # Setze Umgebungsvariablen
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
+ENV DISPLAY=:99
 
 # Exponiere den Port
 EXPOSE 8080
@@ -55,5 +78,6 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
   CMD curl -f http://localhost:${PORT}/health || exit 1
 
-# Starte die Anwendung mit reduzierten Workers
-CMD gunicorn src.app:app --bind 0.0.0.0:$PORT --log-level info --timeout 30 --workers 1 
+# Starte X virtual framebuffer und die Anwendung
+CMD Xvfb :99 -screen 0 1280x1024x24 -ac +extension GLX +render -noreset & \
+    gunicorn src.app:app --bind 0.0.0.0:$PORT --log-level info --timeout 30 --workers 1 
