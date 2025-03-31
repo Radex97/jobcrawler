@@ -365,7 +365,8 @@ def create_app():
                                 "timeoutOccurred": True,
                                 "databaseAvailable": verify_database_connection(),
                                 "executionTime": elapsed_time,
-                                "error": "Timeout während der Verarbeitung"
+                                "error": "Timeout während der Verarbeitung.",
+                                "errorType": "TimeoutError"
                             })
                         elif "monster" in func.__name__:
                             return jsonify({
@@ -381,7 +382,8 @@ def create_app():
                                 "timeoutOccurred": True,
                                 "databaseAvailable": verify_database_connection(),
                                 "executionTime": elapsed_time,
-                                "error": "Timeout während der Verarbeitung"
+                                "error": "Timeout während der Verarbeitung.",
+                                "errorType": "TimeoutError"
                             })
                     
                     return result
@@ -471,13 +473,30 @@ def create_app():
         # Starten des Scraping-Prozesses
         scrape_start = time.time()
         error = None
+        error_type = None
         
         try:
             jobs = find_stepstone_jobs(title, city)
+            
+            # Prüfen, ob Fehlerinformationen in den Jobs enthalten sind
+            if jobs and "error_info" in jobs[0]:
+                error = jobs[0]["error_info"]
+                # Extrahiere den Fehlertyp aus der Fehlermeldung
+                import re
+                error_type_match = re.search(r'Fehler beim Scraping: (\w+):', error)
+                if error_type_match:
+                    error_type = error_type_match.group(1)
+                
+                # Entferne die error_info aus den Jobs
+                for job in jobs:
+                    if "error_info" in job:
+                        del job["error_info"]
+                
         except Exception as e:
             logger.error(f"Fehler beim Stepstone-Scraping: {type(e).__name__}: {e}")
             jobs = []
             error = f"{type(e).__name__}: {str(e)}"
+            error_type = type(e).__name__
         
         scrape_duration = time.time() - scrape_start
         logger.info(f"Stepstone-Scraping abgeschlossen in {scrape_duration:.2f}s, {len(jobs)} Jobs gefunden")
@@ -490,6 +509,9 @@ def create_app():
                 logger.info(f"Jobs in Datenbank gespeichert")
             except Exception as e:
                 logger.error(f"Fehler beim Speichern in Datenbank: {e}")
+                if not error:
+                    error = f"Datenbankfehler: {type(e).__name__}: {str(e)}"
+                    error_type = type(e).__name__
         
         execution_time = time.time() - start_time
         response = {
@@ -503,6 +525,8 @@ def create_app():
         # Fehler in API-Antwort hinzufügen, wenn vorhanden
         if error:
             response["error"] = error
+        if error_type:
+            response["errorType"] = error_type
         
         logger.info(f"Stepstone-Route abgeschlossen in {execution_time:.2f}s")
         return jsonify(response)
@@ -522,13 +546,30 @@ def create_app():
         # Starten des Scraping-Prozesses
         scrape_start = time.time()
         error = None
+        error_type = None
         
         try:
             jobs = find_monster_jobs(title, city)
+            
+            # Prüfen, ob Fehlerinformationen in den Jobs enthalten sind
+            if jobs and "error_info" in jobs[0]:
+                error = jobs[0]["error_info"]
+                # Extrahiere den Fehlertyp aus der Fehlermeldung
+                import re
+                error_type_match = re.search(r'Fehler beim Scraping: (\w+):', error)
+                if error_type_match:
+                    error_type = error_type_match.group(1)
+                
+                # Entferne die error_info aus den Jobs
+                for job in jobs:
+                    if "error_info" in job:
+                        del job["error_info"]
+                
         except Exception as e:
             logger.error(f"Fehler beim Monster-Scraping: {type(e).__name__}: {e}")
             jobs = []
             error = f"{type(e).__name__}: {str(e)}"
+            error_type = type(e).__name__
         
         scrape_duration = time.time() - scrape_start
         logger.info(f"Monster-Scraping abgeschlossen in {scrape_duration:.2f}s, {len(jobs)} Jobs gefunden")
@@ -541,6 +582,9 @@ def create_app():
                 logger.info(f"Jobs in Datenbank gespeichert")
             except Exception as e:
                 logger.error(f"Fehler beim Speichern in Datenbank: {e}")
+                if not error:
+                    error = f"Datenbankfehler: {type(e).__name__}: {str(e)}"
+                    error_type = type(e).__name__
         
         execution_time = time.time() - start_time
         response = {
@@ -554,6 +598,8 @@ def create_app():
         # Fehler in API-Antwort hinzufügen, wenn vorhanden
         if error:
             response["error"] = error
+        if error_type:
+            response["errorType"] = error_type
         
         logger.info(f"Monster-Route abgeschlossen in {execution_time:.2f}s")
         return jsonify(response)

@@ -293,192 +293,203 @@ def find_stepstone_jobs(title, city, max_jobs=3):
 
     logger.info(f"Stepstone-Suche gestartet für Titel='{title}', Stadt='{city}'")
     
-    # URL-Formatierung verbessert - Leerzeichen durch Bindestrich ersetzen und Sonderzeichen behandeln
-    search_title = title.replace(" ", "-").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss").lower()
-    search_city = city.replace(" ", "-").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss").lower()
-    
-    # Search-Variante für Selenium (mit Query-Parametern)
-    selenium_url = f"https://www.stepstone.de/jobs-in-{search_city}/{search_title}"
-    
-    # Alternative URLs für den Fall, dass die Haupturl nicht funktioniert
-    alternative_urls = [
-        selenium_url,
-        f"https://www.stepstone.de/jobs/{search_title}/in-{search_city}",
-        f"https://www.stepstone.de/stellenangebote/suche?q={search_title}&l={search_city}",
-        f"https://www.stepstone.de/stellenangebote/suche?what={search_title}&where={search_city}"
-    ]
-    
-    jobs = []
-    html_content = None
-    used_url = None
-    
-    # Versuche mit Selenium, wenn verfügbar
-    if USE_SELENIUM:
-        logger.info("Verwende Selenium für Stepstone-Scraping")
+    try:
+        # URL-Formatierung verbessert - Leerzeichen durch Bindestrich ersetzen und Sonderzeichen behandeln
+        search_title = title.replace(" ", "-").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss").lower()
+        search_city = city.replace(" ", "-").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss").lower()
         
-        # Versuche jede URL mit Selenium
-        for current_url in alternative_urls:
-            html_content = load_page_with_selenium(
-                current_url, 
-                wait_for_selector=".sc-dkmUuB, .Teaser-sc-574p6w-0, [data-testid='job-item'], article",
-                timeout=20
-            )
-            
-            if html_content and len(html_content) > 1000:  # Prüfe auf valides HTML
-                used_url = current_url
-                logger.info(f"Erfolgreich HTML von URL geladen: {current_url}")
-                break
-            logger.warning(f"Konnte keine valide Seite von {current_url} laden")
+        # Search-Variante für Selenium (mit Query-Parametern)
+        selenium_url = f"https://www.stepstone.de/jobs-in-{search_city}/{search_title}"
         
-        # Mit dem HTML weitermachen, falls gefunden
-        if html_content:
-            soup = BeautifulSoup(html_content, "html.parser")
+        # Alternative URLs für den Fall, dass die Haupturl nicht funktioniert
+        alternative_urls = [
+            selenium_url,
+            f"https://www.stepstone.de/jobs/{search_title}/in-{search_city}",
+            f"https://www.stepstone.de/stellenangebote/suche?q={search_title}&l={search_city}",
+            f"https://www.stepstone.de/stellenangebote/suche?what={search_title}&where={search_city}"
+        ]
+        
+        jobs = []
+        html_content = None
+        used_url = None
+        
+        # Versuche mit Selenium, wenn verfügbar
+        if USE_SELENIUM:
+            logger.info("Verwende Selenium für Stepstone-Scraping")
             
-            # Nach dem typischen "Keine Jobs gefunden" Text suchen
-            if any(text in html_content for text in [
-                "Leider haben wir keine passenden Stellenangebote", 
-                "Keine passenden Jobs gefunden",
-                "Keine Stellenangebote gefunden"
-            ]):
-                logger.warning(f"Stepstone meldet 'Keine Jobs gefunden' für {used_url}")
-                return get_example_jobs(title, city, "stepstone", max_jobs)
+            # Versuche jede URL mit Selenium
+            for current_url in alternative_urls:
+                html_content = load_page_with_selenium(
+                    current_url, 
+                    wait_for_selector=".sc-dkmUuB, .Teaser-sc-574p6w-0, [data-testid='job-item'], article",
+                    timeout=20
+                )
                 
-            # Versuche verschiedene Selektoren für die Stellenangebote
-            card_selectors = [
-                "[data-testid='job-item']",  # Neues Layout
-                ".sc-dkmUuB",                # Alternative Layout-Klasse
-                ".Teaser-sc-574p6w-0",       # Alternatives StepStone-Layout
-                "article.sc-hHtQVP",         # Artikel-Layout
-                "article[data-results-list-item]",  # Datenattribut
-                "article",                   # Generischer Fallback
-            ]
-            
-            job_listings = []
-            for selector in card_selectors:
-                listings = soup.select(selector)
-                if listings:
-                    logger.info(f"Gefunden {len(listings)} Jobs mit Selektor '{selector}'")
-                    job_listings = listings
+                if html_content and len(html_content) > 1000:  # Prüfe auf valides HTML
+                    used_url = current_url
+                    logger.info(f"Erfolgreich HTML von URL geladen: {current_url}")
                     break
+                logger.warning(f"Konnte keine valide Seite von {current_url} laden")
             
-            # Verarbeite die gefundenen Stellenangebote
-            if job_listings:
-                logger.info(f"Insgesamt {len(job_listings)} Stellenangebote gefunden")
+            # Mit dem HTML weitermachen, falls gefunden
+            if html_content:
+                soup = BeautifulSoup(html_content, "html.parser")
                 
-                for job_card in job_listings[:max_jobs]:
-                    try:
-                        # Verschiedene Selektoren für Titel versuchen
-                        title_selectors = [
-                            "h2", "h3", "h5", 
-                            "[data-testid='job-element-title']",
-                            "[data-at='job-item-title']",
-                            ".sc-dkmUuB-title",
-                            ".JobCard-sc-aq7yxf-0 h2"
-                        ]
-                        
-                        job_title = None
-                        for selector in title_selectors:
-                            title_elem = job_card.select_one(selector)
-                            if title_elem and title_elem.text.strip():
-                                job_title = title_elem.text.strip()
-                                break
-                        
-                        # Verschiedene Selektoren für Unternehmen
-                        company_selectors = [
-                            "[data-testid='job-element-company']",
-                            "[data-at='job-item-company-name']",
-                            ".sc-dkmUuB-company",
-                            ".JobCard-sc-aq7yxf-0 .company"
-                        ]
-                        
-                        company = None
-                        for selector in company_selectors:
-                            company_elem = job_card.select_one(selector)
-                            if company_elem and company_elem.text.strip():
-                                company = company_elem.text.strip()
-                                break
-                                
-                        # Verschiedene Selektoren für Standort
-                        location_selectors = [
-                            "[data-testid='job-element-location']",
-                            "[data-at='job-item-location']",
-                            ".sc-dkmUuB-location",
-                            ".JobCard-sc-aq7yxf-0 .location"
-                        ]
-                        
-                        location = None
-                        for selector in location_selectors:
-                            location_elem = job_card.select_one(selector)
-                            if location_elem and location_elem.text.strip():
-                                location = location_elem.text.strip()
-                                break
-                        
-                        # URL extrahieren
-                        url_element = job_card.select_one("a") or None
-                        if url_element:
-                            job_url = url_element.get("href", "")
-                            # Relative URLs korrigieren
-                            if job_url and not job_url.startswith("http"):
-                                job_url = f"https://www.stepstone.de{job_url}"
-                        else:
-                            # Versuche alternative Methoden, um die URL zu extrahieren
-                            all_links = job_card.select("a")
-                            for link in all_links:
-                                href = link.get("href", "")
-                                if href and ("stellenangebot" in href or "job-details" in href):
-                                    job_url = href if href.startswith("http") else f"https://www.stepstone.de{href}"
-                                    break
-                            else:
-                                job_url = f"https://www.stepstone.de/stellenangebote/suche?q={search_title}&l={search_city}"
-                        
-                        # Validiere extrahierte Daten
-                        if not job_title:
-                            logger.warning(f"Kein Jobtitel gefunden für Stepstone-Job")
-                            continue
-                            
-                        if not company:
-                            company = "Unbekanntes Unternehmen"
-                            
-                        if not location:
-                            location = city
-                            
-                        # Job-Objekt erstellen und zur Liste hinzufügen
-                        job_object = {
-                            "title": job_title,
-                            "company": company,
-                            "location": location,
-                            "url": job_url,
-                            "source": "stepstone"
-                        }
-                        
-                        jobs.append(job_object)
-                        logger.info(f"Job gefunden: {job_title} bei {company} in {location}")
-                        
-                    except Exception as e:
-                        logger.error(f"Fehler beim Verarbeiten eines Stepstone-Jobs: {type(e).__name__}: {e}")
-                        continue
-                        
-                    # Prüfen ob Maximum erreicht
-                    if len(jobs) >= max_jobs:
-                        logger.info(f"Maximale Anzahl von {max_jobs} Jobs erreicht")
+                # Nach dem typischen "Keine Jobs gefunden" Text suchen
+                if any(text in html_content for text in [
+                    "Leider haben wir keine passenden Stellenangebote", 
+                    "Keine passenden Jobs gefunden",
+                    "Keine Stellenangebote gefunden"
+                ]):
+                    logger.warning(f"Stepstone meldet 'Keine Jobs gefunden' für {used_url}")
+                    return get_example_jobs(title, city, "stepstone", max_jobs)
+            
+                # Versuche verschiedene Selektoren für die Stellenangebote
+                card_selectors = [
+                    "[data-testid='job-item']",  # Neues Layout
+                    ".sc-dkmUuB",                # Alternative Layout-Klasse
+                    ".Teaser-sc-574p6w-0",       # Alternatives StepStone-Layout
+                    "article.sc-hHtQVP",         # Artikel-Layout
+                    "article[data-results-list-item]",  # Datenattribut
+                    "article",                   # Generischer Fallback
+                ]
+                
+                job_listings = []
+                for selector in card_selectors:
+                    listings = soup.select(selector)
+                    if listings:
+                        logger.info(f"Gefunden {len(listings)} Jobs mit Selektor '{selector}'")
+                        job_listings = listings
                         break
-            else:
-                logger.warning("Keine Job-Listings in der Stepstone-Antwort gefunden")
+                
+                # Verarbeite die gefundenen Stellenangebote
+                if job_listings:
+                    logger.info(f"Insgesamt {len(job_listings)} Stellenangebote gefunden")
+                    
+                    for job_card in job_listings[:max_jobs]:
+                        try:
+                            # Verschiedene Selektoren für Titel versuchen
+                            title_selectors = [
+                                "h2", "h3", "h5", 
+                                "[data-testid='job-element-title']",
+                                "[data-at='job-item-title']",
+                                ".sc-dkmUuB-title",
+                                ".JobCard-sc-aq7yxf-0 h2"
+                            ]
+                            
+                            job_title = None
+                            for selector in title_selectors:
+                                title_elem = job_card.select_one(selector)
+                                if title_elem and title_elem.text.strip():
+                                    job_title = title_elem.text.strip()
+                                    break
+                            
+                            # Verschiedene Selektoren für Unternehmen
+                            company_selectors = [
+                                "[data-testid='job-element-company']",
+                                "[data-at='job-item-company-name']",
+                                ".sc-dkmUuB-company",
+                                ".JobCard-sc-aq7yxf-0 .company"
+                            ]
+                            
+                            company = None
+                            for selector in company_selectors:
+                                company_elem = job_card.select_one(selector)
+                                if company_elem and company_elem.text.strip():
+                                    company = company_elem.text.strip()
+                                    break
+                                    
+                            # Verschiedene Selektoren für Standort
+                            location_selectors = [
+                                "[data-testid='job-element-location']",
+                                "[data-at='job-item-location']",
+                                ".sc-dkmUuB-location",
+                                ".JobCard-sc-aq7yxf-0 .location"
+                            ]
+                            
+                            location = None
+                            for selector in location_selectors:
+                                location_elem = job_card.select_one(selector)
+                                if location_elem and location_elem.text.strip():
+                                    location = location_elem.text.strip()
+                                    break
+                            
+                            # URL extrahieren
+                            url_element = job_card.select_one("a") or None
+                            if url_element:
+                                job_url = url_element.get("href", "")
+                                # Relative URLs korrigieren
+                                if job_url and not job_url.startswith("http"):
+                                    job_url = f"https://www.stepstone.de{job_url}"
+                            else:
+                                # Versuche alternative Methoden, um die URL zu extrahieren
+                                all_links = job_card.select("a")
+                                for link in all_links:
+                                    href = link.get("href", "")
+                                    if href and ("stellenangebot" in href or "job-details" in href):
+                                        job_url = href if href.startswith("http") else f"https://www.stepstone.de{href}"
+                                        break
+                                else:
+                                    job_url = f"https://www.stepstone.de/stellenangebote/suche?q={search_title}&l={search_city}"
+                            
+                            # Validiere extrahierte Daten
+                            if not job_title:
+                                logger.warning(f"Kein Jobtitel gefunden für Stepstone-Job")
+                                continue
+                            
+                            if not company:
+                                company = "Unbekanntes Unternehmen"
+                            
+                            if not location:
+                                location = city
+                            
+                            # Job-Objekt erstellen und zur Liste hinzufügen
+                            job_object = {
+                                "title": job_title,
+                                "company": company,
+                                "location": location,
+                                "url": job_url,
+                                "source": "stepstone"
+                            }
+                            
+                            jobs.append(job_object)
+                            logger.info(f"Job gefunden: {job_title} bei {company} in {location}")
+                        
+                        except Exception as e:
+                            logger.error(f"Fehler beim Verarbeiten eines Stepstone-Jobs: {type(e).__name__}: {e}")
+                            continue
+                        
+                        # Prüfen ob Maximum erreicht
+                        if len(jobs) >= max_jobs:
+                            logger.info(f"Maximale Anzahl von {max_jobs} Jobs erreicht")
+                            break
+                else:
+                    logger.warning("Keine Job-Listings in der Stepstone-Antwort gefunden")
+                    raise ValueError("Keine Job-Listings in der Stepstone-Antwort gefunden")
+        
+        # Fallback auf normale Requests, wenn Selenium nicht verfügbar oder keine Jobs gefunden wurden
+        if not jobs and not USE_SELENIUM:
+            logger.info("Selenium nicht verfügbar, versuche mit normalem HTTP-Request")
+            # Hier der bestehende HTTP-Request-Code
+            # ...
+        
+        # Nach allen Versuchen, wenn keine Jobs gefunden wurden, verwende Beispieldaten
+        if not jobs:
+            logger.warning("Keine Stepstone-Jobs gefunden, verwende Beispieldaten")
+            jobs = get_example_jobs(title, city, "stepstone", max_jobs)
+        
+        execution_time = time.time() - start_time
+        logger.info(f"Stepstone-Suche abgeschlossen in {execution_time:.2f}s, {len(jobs)} Jobs gefunden")
+        return jobs
     
-    # Fallback auf normale Requests, wenn Selenium nicht verfügbar oder keine Jobs gefunden wurden
-    if not jobs and not USE_SELENIUM:
-        logger.info("Selenium nicht verfügbar, versuche mit normalem HTTP-Request")
-        # Hier der bestehende HTTP-Request-Code
-        # ...
-    
-    # Nach allen Versuchen, wenn keine Jobs gefunden wurden, verwende Beispieldaten
-    if not jobs:
-        logger.warning("Keine Stepstone-Jobs gefunden, verwende Beispieldaten")
-        jobs = get_example_jobs(title, city, "stepstone", max_jobs)
-    
-    execution_time = time.time() - start_time
-    logger.info(f"Stepstone-Suche abgeschlossen in {execution_time:.2f}s, {len(jobs)} Jobs gefunden")
-    return jobs
+    except Exception as e:
+        logger.error(f"Fehler bei der Stepstone-Suche: {type(e).__name__}: {e}")
+        example_jobs = get_example_jobs(title, city, "stepstone", max_jobs)
+        execution_time = time.time() - start_time
+        # Füge Fehlerinformationen zu den Beispieldaten hinzu
+        for job in example_jobs:
+            job["error_info"] = f"Fehler beim Scraping: {type(e).__name__}: {str(e)}"
+        return example_jobs
 
 def find_monster_jobs(title, city, max_jobs=3):
     """
@@ -501,193 +512,204 @@ def find_monster_jobs(title, city, max_jobs=3):
 
     logger.info(f"Monster-Suche gestartet für Titel='{title}', Stadt='{city}'")
     
-    # URL-Formatierung verbessert
-    search_title = title.strip().replace(" ", "+")
-    search_city = city.strip().replace(" ", "+")
-    
-    # Direkte Jobsuche-URL (aktuelles Format 2024)
-    selenium_url = f"https://www.monster.de/jobs/suche?q={search_title}&where={search_city}"
-    
-    # Alternative URLs für den Fall, dass die Haupturl nicht funktioniert
-    alternative_urls = [
-        selenium_url,
-        f"https://www.monster.de/jobs/suche/?q={search_title}&where={search_city}",
-        f"https://www.monster.de/jobs/search/?q={search_title}&where={search_city}"
-    ]
-    
-    jobs = []
-    html_content = None
-    used_url = None
-    
-    # Versuche mit Selenium, wenn verfügbar
-    if USE_SELENIUM:
-        logger.info("Verwende Selenium für Monster-Scraping")
+    try:
+        # URL-Formatierung verbessert
+        search_title = title.strip().replace(" ", "+")
+        search_city = city.strip().replace(" ", "+")
         
-        # Versuche jede URL mit Selenium
-        for current_url in alternative_urls:
-            html_content = load_page_with_selenium(
-                current_url, 
-                wait_for_selector="[data-testid='jobCard'], .job-search-card, article.job-card",
-                timeout=20
-            )
-            
-            if html_content and len(html_content) > 1000:  # Prüfe auf valides HTML
-                used_url = current_url
-                logger.info(f"Erfolgreich HTML von URL geladen: {current_url}")
-                break
-            logger.warning(f"Konnte keine valide Seite von {current_url} laden")
+        # Direkte Jobsuche-URL (aktuelles Format 2024)
+        selenium_url = f"https://www.monster.de/jobs/suche?q={search_title}&where={search_city}"
         
-        # Mit dem HTML weitermachen, falls gefunden
-        if html_content:
-            soup = BeautifulSoup(html_content, "html.parser")
+        # Alternative URLs für den Fall, dass die Haupturl nicht funktioniert
+        alternative_urls = [
+            selenium_url,
+            f"https://www.monster.de/jobs/suche/?q={search_title}&where={search_city}",
+            f"https://www.monster.de/jobs/search/?q={search_title}&where={search_city}"
+        ]
+        
+        jobs = []
+        html_content = None
+        used_url = None
+        
+        # Versuche mit Selenium, wenn verfügbar
+        if USE_SELENIUM:
+            logger.info("Verwende Selenium für Monster-Scraping")
             
-            # Nach dem typischen "Keine Jobs gefunden" Text suchen
-            if any(text in html_content for text in [
-                "keine passenden Jobs", 
-                "Leider haben wir keine passenden Stellenangebote",
-                "Keine Treffer gefunden"
-            ]):
-                logger.warning(f"Monster meldet 'Keine Jobs gefunden' für {used_url}")
-                return get_example_jobs(title, city, "monster", max_jobs)
+            # Versuche jede URL mit Selenium
+            for current_url in alternative_urls:
+                html_content = load_page_with_selenium(
+                    current_url, 
+                    wait_for_selector="[data-testid='jobCard'], .job-search-card, article.job-card",
+                    timeout=20
+                )
                 
-            # Versuche verschiedene Selektoren für die Stellenangebote
-            card_selectors = [
-                "[data-testid='jobCard']",           # Neues Layout
-                ".job-search-card",                  # Alternatives Layout
-                "article.job-card",                  # Artikel-Layout
-                ".results-card",                     # Älteres Layout
-                ".job-cardstyle__JobCardComponent",  # Spezielles Layout
-                "article"                            # Generischer Fallback
-            ]
-            
-            job_listings = []
-            for selector in card_selectors:
-                listings = soup.select(selector)
-                if listings:
-                    logger.info(f"Gefunden {len(listings)} Jobs mit Selektor '{selector}'")
-                    job_listings = listings
+                if html_content and len(html_content) > 1000:  # Prüfe auf valides HTML
+                    used_url = current_url
+                    logger.info(f"Erfolgreich HTML von URL geladen: {current_url}")
                     break
+                logger.warning(f"Konnte keine valide Seite von {current_url} laden")
             
-            # Verarbeite die gefundenen Stellenangebote
-            if job_listings:
-                logger.info(f"Insgesamt {len(job_listings)} Stellenangebote gefunden")
+            # Mit dem HTML weitermachen, falls gefunden
+            if html_content:
+                soup = BeautifulSoup(html_content, "html.parser")
                 
-                for job_card in job_listings[:max_jobs]:
-                    try:
-                        # Verschiedene Selektoren für Titel versuchen
-                        title_selectors = [
-                            "[data-testid='jobTitle']",
-                            ".job-card-title",
-                            ".title",
-                            "h2",
-                            "h3.title"
-                        ]
-                        
-                        job_title = None
-                        for selector in title_selectors:
-                            title_elem = job_card.select_one(selector)
-                            if title_elem and title_elem.text.strip():
-                                job_title = title_elem.text.strip()
-                                break
-                        
-                        # Verschiedene Selektoren für Unternehmen
-                        company_selectors = [
-                            "[data-testid='company']",
-                            ".job-card-company",
-                            ".company",
-                            ".name"
-                        ]
-                        
-                        company = None
-                        for selector in company_selectors:
-                            company_elem = job_card.select_one(selector)
-                            if company_elem and company_elem.text.strip():
-                                company = company_elem.text.strip()
-                                break
-                                
-                        # Verschiedene Selektoren für Standort
-                        location_selectors = [
-                            "[data-testid='location']",
-                            ".job-card-location",
-                            ".location",
-                            ".address"
-                        ]
-                        
-                        location = None
-                        for selector in location_selectors:
-                            location_elem = job_card.select_one(selector)
-                            if location_elem and location_elem.text.strip():
-                                location = location_elem.text.strip()
-                                break
-                        
-                        # URL extrahieren
-                        url_selectors = [
-                            "a[data-testid='jobDetailUrl']",
-                            "a.job-card-link",
-                            "a.title-link",
-                            "h2 a", 
-                            "h3 a",
-                            "a[href*='job-view']",
-                            "a"
-                        ]
-                        
-                        job_url = None
-                        for selector in url_selectors:
-                            url_element = job_card.select_one(selector)
-                            if url_element:
-                                job_url = url_element.get("href", "")
-                                if job_url:
-                                    # Relative URLs korrigieren
-                                    if not job_url.startswith("http"):
-                                        job_url = f"https://www.monster.de{job_url}"
-                                    break
-                        
-                        # Fallback für URL
-                        if not job_url:
-                            job_url = f"https://www.monster.de/jobs/suche?q={search_title}&where={search_city}"
-                        
-                        # Validiere extrahierte Daten
-                        if not job_title:
-                            logger.warning(f"Kein Jobtitel gefunden für Monster-Job")
-                            continue
-                            
-                        if not company:
-                            company = "Unbekanntes Unternehmen"
-                            
-                        if not location:
-                            location = city
-                            
-                        # Job-Objekt erstellen und zur Liste hinzufügen
-                        job_object = {
-                            "title": job_title,
-                            "company": company,
-                            "location": location,
-                            "url": job_url,
-                            "source": "monster"
-                        }
-                        
-                        jobs.append(job_object)
-                        logger.info(f"Job gefunden: {job_title} bei {company} in {location}")
-                        
-                    except Exception as e:
-                        logger.error(f"Fehler beim Verarbeiten eines Monster-Jobs: {type(e).__name__}: {e}")
-                        continue
-                        
-                    # Prüfen ob Maximum erreicht
-                    if len(jobs) >= max_jobs:
-                        logger.info(f"Maximale Anzahl von {max_jobs} Jobs erreicht")
+                # Nach dem typischen "Keine Jobs gefunden" Text suchen
+                if any(text in html_content for text in [
+                    "keine passenden Jobs", 
+                    "Leider haben wir keine passenden Stellenangebote",
+                    "Keine Treffer gefunden"
+                ]):
+                    logger.warning(f"Monster meldet 'Keine Jobs gefunden' für {used_url}")
+                    return get_example_jobs(title, city, "monster", max_jobs)
+            
+                # Versuche verschiedene Selektoren für die Stellenangebote
+                card_selectors = [
+                    "[data-testid='jobCard']",           # Neues Layout
+                    ".job-search-card",                  # Alternatives Layout
+                    "article.job-card",                  # Artikel-Layout
+                    ".results-card",                     # Älteres Layout
+                    ".job-cardstyle__JobCardComponent",  # Spezielles Layout
+                    "article"                            # Generischer Fallback
+                ]
+                
+                job_listings = []
+                for selector in card_selectors:
+                    listings = soup.select(selector)
+                    if listings:
+                        logger.info(f"Gefunden {len(listings)} Jobs mit Selektor '{selector}'")
+                        job_listings = listings
                         break
-            else:
-                logger.warning("Keine Job-Listings in der Monster-Antwort gefunden")
-
-    # Nach allen Versuchen, wenn keine Jobs gefunden wurden, verwende Beispieldaten
-    if not jobs:
-        logger.warning("Keine Monster-Jobs gefunden, verwende Beispieldaten")
-        jobs = get_example_jobs(title, city, "monster", max_jobs)
+                
+                # Verarbeite die gefundenen Stellenangebote
+                if job_listings:
+                    logger.info(f"Insgesamt {len(job_listings)} Stellenangebote gefunden")
+                    
+                    for job_card in job_listings[:max_jobs]:
+                        try:
+                            # Verschiedene Selektoren für Titel versuchen
+                            title_selectors = [
+                                "[data-testid='jobTitle']",
+                                ".job-card-title",
+                                ".title",
+                                "h2",
+                                "h3.title"
+                            ]
+                            
+                            job_title = None
+                            for selector in title_selectors:
+                                title_elem = job_card.select_one(selector)
+                                if title_elem and title_elem.text.strip():
+                                    job_title = title_elem.text.strip()
+                                    break
+                            
+                            # Verschiedene Selektoren für Unternehmen
+                            company_selectors = [
+                                "[data-testid='company']",
+                                ".job-card-company",
+                                ".company",
+                                ".name"
+                            ]
+                            
+                            company = None
+                            for selector in company_selectors:
+                                company_elem = job_card.select_one(selector)
+                                if company_elem and company_elem.text.strip():
+                                    company = company_elem.text.strip()
+                                    break
+                                    
+                            # Verschiedene Selektoren für Standort
+                            location_selectors = [
+                                "[data-testid='location']",
+                                ".job-card-location",
+                                ".location",
+                                ".address"
+                            ]
+                            
+                            location = None
+                            for selector in location_selectors:
+                                location_elem = job_card.select_one(selector)
+                                if location_elem and location_elem.text.strip():
+                                    location = location_elem.text.strip()
+                                    break
+                            
+                            # URL extrahieren
+                            url_selectors = [
+                                "a[data-testid='jobDetailUrl']",
+                                "a.job-card-link",
+                                "a.title-link",
+                                "h2 a", 
+                                "h3 a",
+                                "a[href*='job-view']",
+                                "a"
+                            ]
+                            
+                            job_url = None
+                            for selector in url_selectors:
+                                url_element = job_card.select_one(selector)
+                                if url_element:
+                                    job_url = url_element.get("href", "")
+                                    if job_url:
+                                        # Relative URLs korrigieren
+                                        if not job_url.startswith("http"):
+                                            job_url = f"https://www.monster.de{job_url}"
+                                        break
+                            
+                            # Fallback für URL
+                            if not job_url:
+                                job_url = f"https://www.monster.de/jobs/suche?q={search_title}&where={search_city}"
+                            
+                            # Validiere extrahierte Daten
+                            if not job_title:
+                                logger.warning(f"Kein Jobtitel gefunden für Monster-Job")
+                                continue
+                            
+                            if not company:
+                                company = "Unbekanntes Unternehmen"
+                            
+                            if not location:
+                                location = city
+                            
+                            # Job-Objekt erstellen und zur Liste hinzufügen
+                            job_object = {
+                                "title": job_title,
+                                "company": company,
+                                "location": location,
+                                "url": job_url,
+                                "source": "monster"
+                            }
+                            
+                            jobs.append(job_object)
+                            logger.info(f"Job gefunden: {job_title} bei {company} in {location}")
+                        
+                        except Exception as e:
+                            logger.error(f"Fehler beim Verarbeiten eines Monster-Jobs: {type(e).__name__}: {e}")
+                            continue
+                        
+                        # Prüfen ob Maximum erreicht
+                        if len(jobs) >= max_jobs:
+                            logger.info(f"Maximale Anzahl von {max_jobs} Jobs erreicht")
+                            break
+                else:
+                    logger.warning("Keine Job-Listings in der Monster-Antwort gefunden")
+                    raise ValueError("Keine Job-Listings in der Monster-Antwort gefunden")
+        
+        # Nach allen Versuchen, wenn keine Jobs gefunden wurden, verwende Beispieldaten
+        if not jobs:
+            logger.warning("Keine Monster-Jobs gefunden, verwende Beispieldaten")
+            jobs = get_example_jobs(title, city, "monster", max_jobs)
+            
+        execution_time = time.time() - start_time
+        logger.info(f"Monster-Suche abgeschlossen in {execution_time:.2f}s, {len(jobs)} Jobs gefunden")
+        return jobs
     
-    execution_time = time.time() - start_time
-    logger.info(f"Monster-Suche abgeschlossen in {execution_time:.2f}s, {len(jobs)} Jobs gefunden")
-    return jobs
+    except Exception as e:
+        logger.error(f"Fehler bei der Monster-Suche: {type(e).__name__}: {e}")
+        example_jobs = get_example_jobs(title, city, "monster", max_jobs)
+        execution_time = time.time() - start_time
+        # Füge Fehlerinformationen zu den Beispieldaten hinzu
+        for job in example_jobs:
+            job["error_info"] = f"Fehler beim Scraping: {type(e).__name__}: {str(e)}"
+        return example_jobs
 
 def get_text(element, selectors):
     """
