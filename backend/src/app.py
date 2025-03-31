@@ -364,7 +364,8 @@ def create_app():
                                 ],
                                 "timeoutOccurred": True,
                                 "databaseAvailable": verify_database_connection(),
-                                "executionTime": elapsed_time
+                                "executionTime": elapsed_time,
+                                "error": "Timeout während der Verarbeitung"
                             })
                         elif "monster" in func.__name__:
                             return jsonify({
@@ -379,7 +380,8 @@ def create_app():
                                 ],
                                 "timeoutOccurred": True,
                                 "databaseAvailable": verify_database_connection(),
-                                "executionTime": elapsed_time
+                                "executionTime": elapsed_time,
+                                "error": "Timeout während der Verarbeitung"
                             })
                     
                     return result
@@ -389,6 +391,7 @@ def create_app():
                     return jsonify({
                         "jobs": [],
                         "error": str(e),
+                        "errorType": type(e).__name__,
                         "timeoutOccurred": False,
                         "databaseAvailable": verify_database_connection(),
                         "executionTime": time.time() - start_time
@@ -467,13 +470,21 @@ def create_app():
         
         # Starten des Scraping-Prozesses
         scrape_start = time.time()
-        jobs = find_stepstone_jobs(title, city)
+        error = None
+        
+        try:
+            jobs = find_stepstone_jobs(title, city)
+        except Exception as e:
+            logger.error(f"Fehler beim Stepstone-Scraping: {type(e).__name__}: {e}")
+            jobs = []
+            error = f"{type(e).__name__}: {str(e)}"
+        
         scrape_duration = time.time() - scrape_start
         logger.info(f"Stepstone-Scraping abgeschlossen in {scrape_duration:.2f}s, {len(jobs)} Jobs gefunden")
         
         # Versuche, die Jobs in der Datenbank zu speichern
         db_available = verify_database_connection()
-        if db_available:
+        if db_available and jobs:
             try:
                 save_new_jobs(jobs)
                 logger.info(f"Jobs in Datenbank gespeichert")
@@ -488,6 +499,10 @@ def create_app():
             "executionTime": execution_time,
             "scrapingTime": scrape_duration
         }
+        
+        # Fehler in API-Antwort hinzufügen, wenn vorhanden
+        if error:
+            response["error"] = error
         
         logger.info(f"Stepstone-Route abgeschlossen in {execution_time:.2f}s")
         return jsonify(response)
@@ -506,13 +521,21 @@ def create_app():
         
         # Starten des Scraping-Prozesses
         scrape_start = time.time()
-        jobs = find_monster_jobs(title, city)
+        error = None
+        
+        try:
+            jobs = find_monster_jobs(title, city)
+        except Exception as e:
+            logger.error(f"Fehler beim Monster-Scraping: {type(e).__name__}: {e}")
+            jobs = []
+            error = f"{type(e).__name__}: {str(e)}"
+        
         scrape_duration = time.time() - scrape_start
         logger.info(f"Monster-Scraping abgeschlossen in {scrape_duration:.2f}s, {len(jobs)} Jobs gefunden")
         
         # Versuche, die Jobs in der Datenbank zu speichern
         db_available = verify_database_connection()
-        if db_available:
+        if db_available and jobs:
             try:
                 save_new_jobs(jobs)
                 logger.info(f"Jobs in Datenbank gespeichert")
@@ -527,6 +550,10 @@ def create_app():
             "executionTime": execution_time,
             "scrapingTime": scrape_duration
         }
+        
+        # Fehler in API-Antwort hinzufügen, wenn vorhanden
+        if error:
+            response["error"] = error
         
         logger.info(f"Monster-Route abgeschlossen in {execution_time:.2f}s")
         return jsonify(response)

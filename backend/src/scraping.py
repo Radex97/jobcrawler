@@ -63,13 +63,83 @@ def get_selenium_browser():
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
         # Chrome-Service konfigurieren
-        if os.path.exists("/usr/local/bin/chromedriver"):
-            service = Service(executable_path="/usr/local/bin/chromedriver")
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+        driver = None
+        chrome_error = None
+        chrome_version = None
+        chromedriver_version = None
+        
+        # Chrome-Version ermitteln (für Fehlermeldungen)
+        try:
+            import subprocess
+            chrome_version_output = subprocess.check_output(["google-chrome", "--version"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+            chrome_version = chrome_version_output
+            logger.info(f"Gefundene Chrome-Version: {chrome_version}")
+        except Exception as e:
+            logger.warning(f"Chrome-Version konnte nicht ermittelt werden: {e}")
+            chrome_version = "unbekannt"
+        
+        # ChromeDriver-Version ermitteln (für Fehlermeldungen)
+        chromedriver_path = "/usr/local/bin/chromedriver"
+        if os.path.exists(chromedriver_path):
+            try:
+                import subprocess
+                chromedriver_version_output = subprocess.check_output([chromedriver_path, "--version"], stderr=subprocess.STDOUT).decode("utf-8").strip()
+                chromedriver_version = chromedriver_version_output
+                logger.info(f"Gefundene ChromeDriver-Version: {chromedriver_version}")
+            except Exception as e:
+                logger.warning(f"ChromeDriver-Version konnte nicht ermittelt werden: {e}")
+                chromedriver_version = "unbekannt"
+        
+        # Versuche zuerst den installierten ChromeDriver
+        if os.path.exists(chromedriver_path):
+            logger.info(f"Verwende vorinstallierten ChromeDriver: {chromedriver_path}")
+            service = Service(executable_path=chromedriver_path)
+            try:
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                logger.info("ChromeDriver erfolgreich gestartet")
+            except Exception as e:
+                chrome_error = f"Fehler mit vorinstalliertem ChromeDriver: {type(e).__name__}: {e}"
+                logger.warning(chrome_error)
+                # Wir lassen es weiter versuchen
         else:
-            # Fallback auf automatische Installation
-            service = Service(ChromeDriverManager().install())
-            driver = webdriver.Chrome(service=service, options=chrome_options)
+            logger.warning(f"Kein ChromeDriver unter {chromedriver_path} gefunden")
+        
+        # Wenn der erste Versuch fehlgeschlagen ist, versuche es mit der automatischen Installation
+        if driver is None:
+            try:
+                logger.info("Versuche ChromeDriver automatisch zu installieren/nutzen")
+                service = Service(ChromeDriverManager().install())
+                driver = webdriver.Chrome(service=service, options=chrome_options)
+                logger.info("ChromeDriver erfolgreich mit ChromeDriverManager gestartet")
+            except Exception as e:
+                if chrome_error:
+                    chrome_error += f" | Fehler mit ChromeDriverManager: {type(e).__name__}: {e}"
+                else:
+                    chrome_error = f"Fehler mit ChromeDriverManager: {type(e).__name__}: {e}"
+                logger.error(chrome_error)
+                # Fallback zu einem letzten Versuch mit absoluten Pfaden
+                try:
+                    fallback_paths = [
+                        "/usr/bin/chromedriver",
+                        "/usr/local/bin/chromedriver",
+                        "/app/chromedriver",
+                        "/app/chromedriver-linux64/chromedriver"
+                    ]
+                    for path in fallback_paths:
+                        if os.path.exists(path) and os.access(path, os.X_OK):
+                            logger.info(f"Versuche Fallback-ChromeDriver: {path}")
+                            service = Service(executable_path=path)
+                            driver = webdriver.Chrome(service=service, options=chrome_options)
+                            logger.info(f"ChromeDriver erfolgreich mit Fallback-Pfad gestartet: {path}")
+                            break
+                except Exception as e:
+                    chrome_error += f" | Fallback-Fehler: {type(e).__name__}: {e}"
+                    logger.error(f"Alle ChromeDriver-Versuche fehlgeschlagen: {chrome_error}")
+                    raise RuntimeError(f"ChromeDriver-Initialisierung fehlgeschlagen. Chrome: {chrome_version}, ChromeDriver: {chromedriver_version}, Fehler: {chrome_error}")
+        
+        # Wenn wir bis hierhin kommen und keinen Treiber haben, wirf einen Fehler
+        if driver is None:
+            raise RuntimeError(f"ChromeDriver konnte nicht initialisiert werden. Chrome: {chrome_version}, ChromeDriver: {chromedriver_version}, Fehler: {chrome_error}")
         
         # Selenium stealth (anti-detection) direkt im Browser-Kontext ausführen
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
