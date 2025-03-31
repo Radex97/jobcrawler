@@ -41,14 +41,15 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
-# Chrome-Version überprüfen und passenden ChromeDriver herunterladen
+# Vereinfachte und robustere Chrome-Driver-Installation
 RUN CHROME_VERSION=$(google-chrome --version | awk '{print $3}' | cut -d. -f1) && \
-    wget -q "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}" -O CHROMEVER && \
-    wget -q "https://chromedriver.storage.googleapis.com/$(cat CHROMEVER)/chromedriver_linux64.zip" && \
-    unzip chromedriver_linux64.zip && \
+    CHROMEDRIVER_VERSION=$(curl -s "https://chromedriver.storage.googleapis.com/LATEST_RELEASE_${CHROME_VERSION}") && \
+    echo "Installiere ChromeDriver Version ${CHROMEDRIVER_VERSION} für Chrome ${CHROME_VERSION}" && \
+    wget -q "https://chromedriver.storage.googleapis.com/${CHROMEDRIVER_VERSION}/chromedriver_linux64.zip" && \
+    unzip -q chromedriver_linux64.zip && \
     mv chromedriver /usr/local/bin/ && \
     chmod +x /usr/local/bin/chromedriver && \
-    rm chromedriver_linux64.zip CHROMEVER
+    rm chromedriver_linux64.zip
 
 # Kopiere Anforderungen zuerst für besseres Caching
 COPY backend/requirements.txt .
